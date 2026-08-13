@@ -1,14 +1,50 @@
-.anchor
-.DS_Store
-target
+# Rust / Cargo
+/target/
+/debug/
 **/*.rs.bk
-node_modules
-test-ledger
-.yarn
-.surfpool
-.idea
-.vscode
+*.pdb
+rustc-ice-*.txt
+**/mutants.out*/
 
-# Program keypairs must never be committed
-**/target/deploy/*.json
+# Anchor / Solana local runtime
+.anchor/
+.surfpool/
+test-ledger/
+
+# Compiled program copies outside target/
+*.so
+
+# Secrets — never commit keypairs, wallets, or env files
 *-keypair.json
+*.keypair
+id.json
+.env
+.env.*
+!.env.example
+
+# Node (reserved for a future client)
+node_modules/
+dist/
+build/
+.yarn/
+.pnp.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test / coverage artifacts
+coverage/
+lcov.info
+tarpaulin-report.html
+*.log
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
