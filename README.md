@@ -2,19 +2,22 @@
 
 On-chain vote ledger for Solana. Built with [Anchor](https://www.anchor-lang.com/) and tested in-process with [LiteSVM](https://github.com/LiteSVM/litesvm).
 
+Votes are **token-weighted**: weight is the voter’s SPL token balance of a mint stored on `Config`, snapshotted when they vote.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Anchor](https://img.shields.io/badge/Anchor-1.1.2-8752F3)](https://www.anchor-lang.com/)
 [![Solana](https://img.shields.io/badge/Solana-3.1.10-9945FF)](https://solana.com/)
 
 ## What this is
 
-A portfolio Solana program that will record polls, votes, and tallies on-chain. This repository currently contains the **workspace scaffold only**:
+A portfolio Solana program that records polls, votes, and tallies on-chain.
+
+**This PR** defines the domain accounts and stores the vote mint on `Config`. Voting instructions are not implemented yet.
 
 - Anchor 1.1 workspace and a modular program crate
-- A single `initialize` instruction that creates a `Config` PDA
-- A LiteSVM smoke test that loads the `.so` and asserts the PDA
-
-Voting instructions (`create_poll`, `cast_vote`, tally/close) are **not implemented yet**. They will land in follow-up PRs.
+- `initialize` creates a `Config` PDA and records the vote mint (`InterfaceAccount<Mint>`, Token + Token-2022)
+- `Poll` and `VoteReceipt` account layouts (instructions in follow-up PRs)
+- LiteSVM tests that insert a packed mint and assert `vote_mint` + `poll_count`
 
 ## Stack
 
@@ -25,30 +28,34 @@ Voting instructions (`create_poll`, `cast_vote`, tally/close) are **not implemen
 | Rust (MSRV) | 1.89.0 |
 | LiteSVM | 0.10.x |
 | solana crates | ^3 |
+| Tokens | SPL Token + Token-2022 (`anchor-spl` interfaces) |
 
-## Intended architecture
-
-Design only — `Poll` and `VoteReceipt` are not on-chain yet.
+## Architecture
 
 ```mermaid
 flowchart TD
-  payer[Payer / authority]
+  authority[Config authority]
   config["Config PDA seeds = config"]
+  mint[Vote mint]
   poll["Poll PDA seeds = poll, poll_id"]
+  ata[Voter ATA]
   receipt["VoteReceipt PDA seeds = vote, poll, voter"]
 
-  payer -->|initialize| config
-  payer -->|create_poll later| poll
-  config --> poll
-  payer -->|cast_vote later| receipt
+  authority -->|initialize| config
+  config --> mint
+  authority -->|create_poll later| poll
+  ata -->|cast_vote later weight = amount| receipt
   poll --> receipt
+  authority -->|close_poll later| poll
 ```
 
-| Account | Seeds | Role |
+| Account | Seeds | Status |
 | --- | --- | --- |
-| `Config` | `["config"]` | Program authority. Implemented in this PR. |
-| `Poll` | `["poll", poll_id]` | Question, options, window, tallies. Later PR. |
-| `VoteReceipt` | `["vote", poll, voter]` | One vote per voter per poll. Later PR. |
+| `Config` | `["config"]` | Implemented. Authority, vote mint, sequential `poll_count`. |
+| `Poll` | `["poll", poll_id]` | Layout only. Question, 2–4 options, window, tallies. |
+| `VoteReceipt` | `["vote", poll, voter]` | Layout only. Choice + snapshotted token weight. |
+
+Vote weight is snapshotted at `cast_vote`. Moving tokens afterward does not change a recorded vote.
 
 ## Project layout
 
@@ -63,7 +70,9 @@ flowchart TD
 │   │   ├── error.rs
 │   │   ├── state.rs
 │   │   └── instructions/
-│   └── tests/test_initialize.rs
+│   └── tests/
+│       ├── common/mod.rs
+│       └── test_initialize.rs
 ```
 
 ## Prerequisites
@@ -83,9 +92,7 @@ NO_DNA=1 cargo test
 
 ## Security notes
 
-These rules will apply as voting logic is added:
-
-- Prefer typed `Account<'info, T>` over `UncheckedAccount`
+- Prefer typed `Account<'info, T>` / `InterfaceAccount` over `UncheckedAccount`
 - Derive PDAs with canonical seeds and store/verify bumps
 - Check signers and `has_one` / `constraint` for authority
 - Do not use `init_if_needed` (reinitialization risk)
@@ -93,11 +100,12 @@ These rules will apply as voting logic is added:
 
 ## Roadmap
 
-1. Scaffold (this PR) — workspace, `Config`, LiteSVM
-2. `Poll` and `VoteReceipt` account layouts
+1. Scaffold — workspace, `Config`, LiteSVM
+2. Domain accounts + vote mint on `initialize` (this PR)
 3. `create_poll`
-4. `cast_vote` (one receipt PDA per voter)
-5. Close / tally and remaining error paths
+4. `cast_vote` (token-weighted, one receipt PDA per voter)
+5. `close_poll`
+6. Minimal web UI (Kit wallet)
 
 ## License
 
