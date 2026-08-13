@@ -2,7 +2,6 @@
 
 On-chain vote ledger for Solana. Built with [Anchor](https://www.anchor-lang.com/) and tested in-process with [LiteSVM](https://github.com/LiteSVM/litesvm).
 
-[![CI](https://github.com/klisman/ledger-vote-solana/actions/workflows/ci.yml/badge.svg)](https://github.com/klisman/ledger-vote-solana/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Anchor](https://img.shields.io/badge/Anchor-1.1.2-8752F3)](https://www.anchor-lang.com/)
 [![Solana](https://img.shields.io/badge/Solana-3.1.10-9945FF)](https://solana.com/)
@@ -14,7 +13,6 @@ A portfolio Solana program that will record polls, votes, and tallies on-chain. 
 - Anchor 1.1 workspace and a modular program crate
 - A single `initialize` instruction that creates a `Config` PDA
 - A LiteSVM smoke test that loads the `.so` and asserts the PDA
-- GitHub Actions CI that builds and tests on every pull request
 
 Voting instructions (`create_poll`, `cast_vote`, tally/close) are **not implemented yet**. They will land in follow-up PRs.
 
@@ -66,7 +64,6 @@ flowchart TD
 │   │   ├── state.rs
 │   │   └── instructions/
 │   └── tests/test_initialize.rs
-└── .github/workflows/ci.yml
 ```
 
 ## Prerequisites
@@ -96,7 +93,7 @@ These rules will apply as voting logic is added:
 
 ## Roadmap
 
-1. Scaffold (this PR) — workspace, `Config`, LiteSVM, CI
+1. Scaffold (this PR) — workspace, `Config`, LiteSVM
 2. `Poll` and `VoteReceipt` account layouts
 3. `create_poll`
 4. `cast_vote` (one receipt PDA per voter)
