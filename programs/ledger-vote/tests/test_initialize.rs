@@ -1,52 +1,37 @@
+mod common;
+
 use {
-    anchor_lang::{
-        prelude::Pubkey,
-        solana_program::{instruction::Instruction, system_program},
-        AccountDeserialize, InstructionData, ToAccountMetas,
-    },
-    litesvm::LiteSVM,
+    anchor_lang::{prelude::Pubkey, AccountDeserialize},
     solana_keypair::Keypair,
-    solana_message::{Message, VersionedMessage},
     solana_signer::Signer,
-    solana_transaction::versioned::VersionedTransaction,
 };
+
+use common::{initialize_ix, insert_mint, send_ix, setup_svm};
 
 #[test]
 fn test_initialize() {
-    let program_id = ledger_vote::id();
+    let (mut svm, program_id) = setup_svm();
     let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
+
+    let vote_mint = Pubkey::new_unique();
+    insert_mint(&mut svm, vote_mint, payer.pubkey());
+
     let (config, bump) =
         Pubkey::find_program_address(&[ledger_vote::constants::CONFIG_SEED], &program_id);
 
-    let mut svm = LiteSVM::new();
-    let bytes = include_bytes!(concat!(
-        env!("CARGO_TARGET_TMPDIR"),
-        "/../deploy/ledger_vote.so"
-    ));
-    svm.add_program(program_id, bytes).unwrap();
-    svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
-
-    let instruction = Instruction::new_with_bytes(
-        program_id,
-        &ledger_vote::instruction::Initialize {}.data(),
-        ledger_vote::accounts::Initialize {
-            payer: payer.pubkey(),
-            config,
-            system_program: system_program::ID,
-        }
-        .to_account_metas(None),
+    let res = send_ix(
+        &mut svm,
+        &payer,
+        initialize_ix(payer.pubkey(), config, vote_mint),
     );
-
-    let blockhash = svm.latest_blockhash();
-    let msg = Message::new_with_blockhash(&[instruction], Some(&payer.pubkey()), &blockhash);
-    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[&payer]).unwrap();
-
-    let res = svm.send_transaction(tx);
     assert!(res.is_ok(), "initialize failed: {res:?}");
 
     let config_account = svm.get_account(&config).expect("config PDA should exist");
     let mut data: &[u8] = &config_account.data;
     let config_state = ledger_vote::state::Config::try_deserialize(&mut data).unwrap();
     assert_eq!(config_state.authority, payer.pubkey());
+    assert_eq!(config_state.vote_mint, vote_mint);
+    assert_eq!(config_state.poll_count, 0);
     assert_eq!(config_state.bump, bump);
 }
