@@ -12,12 +12,12 @@ Votes are **token-weighted**: weight is the voter’s SPL token balance of a min
 
 A portfolio Solana program that records polls, votes, and tallies on-chain.
 
-**This PR** defines the domain accounts and stores the vote mint on `Config`. Voting instructions are not implemented yet.
+**This PR** adds `create_poll`. Only the Config authority can open a poll. Vote casting is next.
 
-- Anchor 1.1 workspace and a modular program crate
-- `initialize` creates a `Config` PDA and records the vote mint (`InterfaceAccount<Mint>`, Token + Token-2022)
-- `Poll` and `VoteReceipt` account layouts (instructions in follow-up PRs)
-- LiteSVM tests that insert a packed mint and assert `vote_mint` + `poll_count`
+- `initialize` creates `Config` and records the vote mint
+- `create_poll` opens a `Poll` PDA at `["poll", poll_id]` where `poll_id = config.poll_count`
+- Rejects unauthorized signers, fewer than 2 / more than 4 options, empty question, and invalid time windows
+- `VoteReceipt` and `cast_vote` still come later
 
 ## Stack
 
@@ -43,7 +43,7 @@ flowchart TD
 
   authority -->|initialize| config
   config --> mint
-  authority -->|create_poll later| poll
+  authority -->|create_poll| poll
   ata -->|cast_vote later weight = amount| receipt
   poll --> receipt
   authority -->|close_poll later| poll
@@ -52,7 +52,7 @@ flowchart TD
 | Account | Seeds | Status |
 | --- | --- | --- |
 | `Config` | `["config"]` | Implemented. Authority, vote mint, sequential `poll_count`. |
-| `Poll` | `["poll", poll_id]` | Layout only. Question, 2–4 options, window, tallies. |
+| `Poll` | `["poll", poll_id]` | Implemented. Question, 2–4 options, window, tallies. |
 | `VoteReceipt` | `["vote", poll, voter]` | Layout only. Choice + snapshotted token weight. |
 
 Vote weight is snapshotted at `cast_vote`. Moving tokens afterward does not change a recorded vote.
@@ -71,8 +71,10 @@ Vote weight is snapshotted at `cast_vote`. Moving tokens afterward does not chan
 │   │   ├── state.rs
 │   │   └── instructions/
 │   └── tests/
-│       ├── common/mod.rs
-│       └── test_initialize.rs
+│       ├── common/harness.rs
+│       ├── common/poll.rs
+│       ├── test_initialize.rs
+│       └── test_create_poll.rs
 ```
 
 ## Prerequisites
@@ -101,8 +103,8 @@ NO_DNA=1 cargo test
 ## Roadmap
 
 1. Scaffold — workspace, `Config`, LiteSVM
-2. Domain accounts + vote mint on `initialize` (this PR)
-3. `create_poll`
+2. Domain accounts + vote mint on `initialize`
+3. `create_poll` (this PR)
 4. `cast_vote` (token-weighted, one receipt PDA per voter)
 5. `close_poll`
 6. Minimal web UI (Kit wallet)

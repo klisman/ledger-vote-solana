@@ -6,6 +6,8 @@ pub enum ErrorCode {
     Unauthorized,
     #[msg("A poll must have between 2 and 4 options")]
     InvalidOptionCount,
+    #[msg("Each option must be non-empty and at most 32 bytes")]
+    InvalidOption,
     #[msg("Question must be non-empty and at most 64 bytes")]
     InvalidQuestion,
     #[msg("Poll window is invalid: start must be before end, and end must be in the future")]
@@ -20,4 +22,6 @@ pub enum ErrorCode {
     ZeroVoteWeight,
     #[msg("Tally overflow")]
     TallyOverflow,
+    #[msg("Poll count overflow")]
+    PollCountOverflow,
 }

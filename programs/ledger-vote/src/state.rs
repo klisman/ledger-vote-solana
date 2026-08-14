@@ -11,7 +11,7 @@ pub struct Config {
     pub bump: u8,
 }
 
-/// Defined in this PR; `create_poll` lands next.
+/// Poll question, options, voting window, and tallies.
 #[account]
 #[derive(InitSpace)]
 pub struct Poll {

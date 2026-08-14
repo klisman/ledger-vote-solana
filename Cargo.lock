@@ -1572,12 +1572,15 @@ dependencies = [
  "anchor-spl",
  "litesvm",
  "solana-account",
+ "solana-clock",
+ "solana-instruction",
  "solana-keypair",
  "solana-message",
  "solana-program-option",
  "solana-program-pack",
  "solana-signer",
  "solana-transaction",
+ "solana-transaction-error",
  "spl-token-interface",
 ]
 

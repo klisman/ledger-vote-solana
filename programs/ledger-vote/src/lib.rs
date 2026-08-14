@@ -18,4 +18,16 @@ pub mod ledger_vote {
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         crate::instructions::initialize::handle_initialize(ctx)
     }
+
+    pub fn create_poll(
+        ctx: Context<CreatePoll>,
+        question: String,
+        options: Vec<String>,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> Result<()> {
+        crate::instructions::create_poll::handle_create_poll(
+            ctx, question, options, start_ts, end_ts,
+        )
+    }
 }
