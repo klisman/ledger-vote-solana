@@ -54,7 +54,7 @@ pub fn handle_create_poll(
     for (i, option) in options.iter().enumerate() {
         require!(
             !option.is_empty() && option.len() <= MAX_OPTION_LEN,
-            ErrorCode::InvalidOptionCount
+            ErrorCode::InvalidOption
         );
         option_bytes[i][..option.len()].copy_from_slice(option.as_bytes());
     }
@@ -72,7 +72,7 @@ pub fn handle_create_poll(
     poll.closed = false;
     poll.tallies = [0; MAX_OPTIONS as usize];
 
-    ctx.accounts.config.poll_count = poll_id.saturating_add(1);
+    ctx.accounts.config.poll_count = poll_id.checked_add(1).ok_or(ErrorCode::PollCountOverflow)?;
     msg!("Poll {} created", poll_id);
     Ok(())
 }

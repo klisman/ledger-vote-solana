@@ -1,9 +1,36 @@
-use {litesvm::LiteSVM, solana_keypair::Keypair, solana_signer::Signer};
+use {
+    litesvm::types::TransactionResult, litesvm::LiteSVM,
+    solana_instruction::error::InstructionError, solana_keypair::Keypair, solana_signer::Signer,
+    solana_transaction_error::TransactionError,
+};
 
 use super::harness::{initialize_ix, insert_mint, send_ix};
 use anchor_lang::{
     prelude::Pubkey, solana_program::instruction::Instruction, InstructionData, ToAccountMetas,
 };
+use ledger_vote::error::ErrorCode;
+
+pub fn assert_anchor_error(res: TransactionResult, expected: ErrorCode) {
+    let failed = match res {
+        Err(e) => e,
+        Ok(meta) => panic!("expected {expected:?}, transaction succeeded: {meta:?}"),
+    };
+    let expected_code = u32::from(expected);
+    match failed.err {
+        TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
+            assert_eq!(
+                code,
+                expected_code,
+                "expected {expected:?} ({expected_code}), got Custom({code}); logs:\n{}",
+                failed.meta.logs.join("\n")
+            );
+        }
+        other => panic!(
+            "expected {expected:?} ({expected_code}), got {other:?}; logs:\n{}",
+            failed.meta.logs.join("\n")
+        ),
+    }
+}
 
 pub fn create_poll_ix(
     authority: Pubkey,
