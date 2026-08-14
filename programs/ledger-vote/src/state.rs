@@ -27,7 +27,7 @@ pub struct Poll {
     pub tallies: [u64; MAX_OPTIONS as usize],
 }
 
-/// Defined in this PR; `cast_vote` lands later.
+/// One receipt per (poll, voter). `weight` is `floor(sqrt(ATA amount))` at `cast_vote`.
 #[account]
 #[derive(InitSpace)]
 pub struct VoteReceipt {
