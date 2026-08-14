@@ -1,4 +1,5 @@
-mod common;
+#[path = "common/harness.rs"]
+mod harness;
 
 use {
     anchor_lang::{prelude::Pubkey, AccountDeserialize},
@@ -6,7 +7,7 @@ use {
     solana_signer::Signer,
 };
 
-use common::{initialize_ix, insert_mint, send_ix, setup_svm};
+use harness::{initialize_ix, insert_mint, send_ix, setup_svm};
 
 #[test]
 fn test_initialize() {

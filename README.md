@@ -71,7 +71,8 @@ Vote weight is snapshotted at `cast_vote`. Moving tokens afterward does not chan
 │   │   ├── state.rs
 │   │   └── instructions/
 │   └── tests/
-│       ├── common/mod.rs
+│       ├── common/harness.rs
+│       ├── common/poll.rs
 │       ├── test_initialize.rs
 │       └── test_create_poll.rs
 ```

@@ -1,12 +1,12 @@
-mod common;
+#[path = "common/harness.rs"]
+mod harness;
+#[path = "common/poll.rs"]
+mod poll;
 
-use {
-    anchor_lang::{prelude::Pubkey, AccountDeserialize},
-    solana_keypair::Keypair,
-    solana_signer::Signer,
-};
+use {anchor_lang::AccountDeserialize, solana_keypair::Keypair, solana_signer::Signer};
 
-use common::{create_poll_ix, initialized, poll_pda, send_ix, set_clock, setup_svm, TEST_NOW};
+use harness::{send_ix, setup_svm};
+use poll::{create_poll_ix, initialized, poll_pda, set_clock, TEST_NOW};
 
 fn two_options() -> Vec<String> {
     vec!["yes".into(), "no".into()]
