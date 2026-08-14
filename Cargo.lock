@@ -1581,6 +1581,7 @@ dependencies = [
  "solana-signer",
  "solana-transaction",
  "solana-transaction-error",
+ "spl-associated-token-account-interface",
  "spl-token-interface",
 ]
 

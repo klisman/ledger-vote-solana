@@ -7,7 +7,7 @@ use {
     solana_program_pack::Pack,
     solana_signer::Signer,
     solana_transaction::versioned::VersionedTransaction,
-    spl_token_interface::{state::Mint, ID as TOKEN_PROGRAM_ID},
+    spl_token_interface::state::Mint,
 };
 
 use anchor_lang::{
@@ -28,7 +28,7 @@ pub fn setup_svm() -> (LiteSVM, Pubkey) {
     (svm, program_id)
 }
 
-pub fn insert_mint(svm: &mut LiteSVM, mint: Pubkey, mint_authority: Pubkey) {
+pub fn insert_mint(svm: &mut LiteSVM, mint: Pubkey, mint_authority: Pubkey, token_program: Pubkey) {
     let mint_state = Mint {
         mint_authority: COption::Some(mint_authority),
         supply: 0,
@@ -43,7 +43,7 @@ pub fn insert_mint(svm: &mut LiteSVM, mint: Pubkey, mint_authority: Pubkey) {
         Account {
             lamports: 1_000_000_000,
             data,
-            owner: TOKEN_PROGRAM_ID,
+            owner: token_program,
             executable: false,
             rent_epoch: 0,
         },
@@ -62,7 +62,12 @@ pub fn send_ix(
     svm.send_transaction(tx)
 }
 
-pub fn initialize_ix(payer: Pubkey, config: Pubkey, vote_mint: Pubkey) -> Instruction {
+pub fn initialize_ix(
+    payer: Pubkey,
+    config: Pubkey,
+    vote_mint: Pubkey,
+    token_program: Pubkey,
+) -> Instruction {
     Instruction::new_with_bytes(
         ledger_vote::id(),
         &ledger_vote::instruction::Initialize {}.data(),
@@ -70,7 +75,7 @@ pub fn initialize_ix(payer: Pubkey, config: Pubkey, vote_mint: Pubkey) -> Instru
             payer,
             config,
             vote_mint,
-            token_program: TOKEN_PROGRAM_ID,
+            token_program,
             system_program: anchor_lang::solana_program::system_program::ID,
         }
         .to_account_metas(None),
