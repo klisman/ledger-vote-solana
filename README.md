@@ -144,7 +144,7 @@ Weight is per **wallet snapshot**, not per token. Sequential reuse (transfer the
 - Rust 1.89.0 (`rust-toolchain.toml` pins this)
 - Solana CLI 3.1.10
 - Anchor CLI 1.1.2 (`avm install 1.1.2 && avm use 1.1.2`)
-- Node.js 20+ (for `app/`)
+- Node.js 24+ (for `app/`; Kit token packages require it)
 
 ## Build and test
 
