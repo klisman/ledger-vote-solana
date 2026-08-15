@@ -12,13 +12,15 @@ Votes are **square-root token-weighted**: weight is `floor(sqrt(ATA amount))` of
 
 A portfolio Solana program that records polls, votes, and tallies on-chain.
 
-**This PR** adds square-root-weighted `cast_vote`. Anyone with a positive ATA of the Config mint can vote once per poll.
+**This PR** adds `close_poll`. The Config authority can lock a poll at any time; later `cast_vote` calls fail. Tallies already on the poll are left unchanged.
 
 - `initialize` creates `Config` and records the vote mint
 - `create_poll` opens a `Poll` PDA at `["poll", poll_id]` where `poll_id = config.poll_count`
-- `cast_vote` snapshots `weight = floor(sqrt(ATA amount))` onto a `VoteReceipt` at `["vote", poll, voter]` and adds that to the poll tally
-- Rejects closed polls, votes outside the window, out-of-range choices, zero balance, and a second receipt for the same voter
+- `cast_vote` snapshots `weight = floor(sqrt(ATA amount))` onto a `VoteReceipt` at `["vote", poll, voter]`
+- `close_poll` sets `closed = true` (authority only; rejects a second close)
 - Token and Token-2022 ATAs both work (`InterfaceAccount` + `TokenInterface`)
+
+The on-chain program is complete. A Kit wallet UI is next.
 
 ## Stack
 
@@ -47,14 +49,23 @@ flowchart TD
   authority -->|create_poll| poll
   ata -->|cast_vote weight = sqrt amount| receipt
   poll --> receipt
-  authority -->|close_poll later| poll
+  authority -->|close_poll| poll
 ```
 
 | Account | Seeds | Status |
 | --- | --- | --- |
 | `Config` | `["config"]` | Implemented. Authority, vote mint, sequential `poll_count`. |
-| `Poll` | `["poll", poll_id]` | Implemented. Question, 2–4 options, window, tallies. |
+| `Poll` | `["poll", poll_id]` | Implemented. Question, 2–4 options, window, tallies, `closed`. |
 | `VoteReceipt` | `["vote", poll, voter]` | Implemented. Choice + `floor(sqrt(ATA amount))` snapshotted at vote. One per voter per poll. |
+
+## Instructions
+
+| Instruction | Signer | Effect |
+| --- | --- | --- |
+| `initialize` | payer (becomes Config authority) | Creates `Config`, stores `vote_mint` |
+| `create_poll` | Config authority | Creates the next `Poll` PDA, increments `poll_count` |
+| `cast_vote` | any wallet with a positive vote-mint ATA | Snapshots `floor(sqrt(amount))` onto a `VoteReceipt`, adds it to `tallies` |
+| `close_poll` | Config authority | Sets `poll.closed = true` without changing tallies. May run before `end_ts` |
 
 ## Vote weight
 
@@ -104,9 +115,11 @@ Splitting tokens across wallets can raise *total* sqrt weight (100 wallets of 1 
 │       ├── common/harness.rs
 │       ├── common/poll.rs
 │       ├── common/vote.rs
+│       ├── common/close.rs
 │       ├── test_initialize.rs
 │       ├── test_create_poll.rs
-│       └── test_cast_vote.rs
+│       ├── test_cast_vote.rs
+│       └── test_close_poll.rs
 ```
 
 ## Prerequisites
@@ -128,8 +141,9 @@ NO_DNA=1 cargo test
 
 - Prefer typed `Account<'info, T>` / `InterfaceAccount` over `UncheckedAccount`
 - Derive PDAs with canonical seeds and store/verify bumps
-- Check signers and `has_one` / `constraint` for authority
-- Do not use `init_if_needed` (reinitialization risk)
+- Check signers and `has_one` / `constraint` for authority (`create_poll`, `close_poll`)
+- Constrain the voter ATA to `config.vote_mint` (`associated_token`)
+- Do not use `init_if_needed` (reinitialization risk); one `VoteReceipt` per voter is `init`
 - Keep program keypairs out of git
 
 ## Roadmap
@@ -141,8 +155,8 @@ Sequential PRs. Each is its own branch; merge before starting the next.
 | 1 | Scaffold — workspace, `Config`, LiteSVM | `feat/01-scaffold` | Merged ([#2](https://github.com/klisman/ledger-vote-solana/pull/2)) |
 | 2 | Domain accounts + vote mint on `initialize` | `feat/02-accounts-and-mint` | Merged ([#3](https://github.com/klisman/ledger-vote-solana/pull/3)) |
 | 3 | `create_poll` | `feat/03-create-poll` | Merged ([#4](https://github.com/klisman/ledger-vote-solana/pull/4)) |
-| 4 | `cast_vote` — square-root token weight, one `VoteReceipt` per voter | `feat/04-cast-vote` | **This PR** ([#5](https://github.com/klisman/ledger-vote-solana/pull/5)) |
-| 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | Next, after #5 merges |
+| 4 | `cast_vote` — square-root token weight, one `VoteReceipt` per voter | `feat/04-cast-vote` | Merged ([#5](https://github.com/klisman/ledger-vote-solana/pull/5)) |
+| 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | **This PR** |
 | 6 | Minimal web UI — Next.js + Kit wallet | `feat/06-web-ui` | After `close_poll` |
 
 `cast_vote` weight is `floor(sqrt(raw ATA amount))`, snapshotted on the receipt. Linear `weight = amount` is out: extra tokens still add power, with diminishing returns so a whale cannot linearly dominate.
