@@ -40,4 +40,8 @@ pub mod ledger_vote {
     pub fn close_poll(ctx: Context<ClosePoll>) -> Result<()> {
         crate::instructions::close_poll::handle_close_poll(ctx)
     }
+
+    pub fn thaw_vote(ctx: Context<ThawVote>) -> Result<()> {
+        crate::instructions::thaw_vote::handle_thaw_vote(ctx)
+    }
 }

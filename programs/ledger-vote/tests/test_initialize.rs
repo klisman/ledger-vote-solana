@@ -1,5 +1,7 @@
 #[path = "common/harness.rs"]
 mod harness;
+#[path = "common/poll.rs"]
+mod poll;
 
 use {
     anchor_lang::{prelude::Pubkey, AccountDeserialize},
@@ -8,6 +10,8 @@ use {
 };
 
 use harness::{initialize_ix, insert_mint, send_ix, setup_svm};
+use ledger_vote::error::ErrorCode;
+use poll::assert_anchor_error;
 use spl_token_interface::ID as TOKEN_PROGRAM_ID;
 
 #[test]
@@ -16,11 +20,10 @@ fn test_initialize() {
     let payer = Keypair::new();
     svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
 
-    let vote_mint = Pubkey::new_unique();
-    insert_mint(&mut svm, vote_mint, payer.pubkey(), TOKEN_PROGRAM_ID);
-
     let (config, bump) =
         Pubkey::find_program_address(&[ledger_vote::constants::CONFIG_SEED], &program_id);
+    let vote_mint = Pubkey::new_unique();
+    insert_mint(&mut svm, vote_mint, payer.pubkey(), TOKEN_PROGRAM_ID, Some(config));
 
     let res = send_ix(
         &mut svm,
@@ -36,4 +39,51 @@ fn test_initialize() {
     assert_eq!(config_state.vote_mint, vote_mint);
     assert_eq!(config_state.poll_count, 0);
     assert_eq!(config_state.bump, bump);
+}
+
+#[test]
+fn initialize_rejects_mint_without_config_freeze() {
+    let (mut svm, program_id) = setup_svm();
+    let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
+    let (config, _) =
+        Pubkey::find_program_address(&[ledger_vote::constants::CONFIG_SEED], &program_id);
+    let vote_mint = Pubkey::new_unique();
+    insert_mint(&mut svm, vote_mint, payer.pubkey(), TOKEN_PROGRAM_ID, None);
+    let res = send_ix(
+        &mut svm,
+        &payer,
+        initialize_ix(payer.pubkey(), config, vote_mint, TOKEN_PROGRAM_ID),
+    );
+    assert_anchor_error(res, ErrorCode::MintFreezeRequired);
+}
+
+#[test]
+fn initialize_rejects_second_call() {
+    let (mut svm, program_id) = setup_svm();
+    let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
+    let (config, _) =
+        Pubkey::find_program_address(&[ledger_vote::constants::CONFIG_SEED], &program_id);
+    let vote_mint = Pubkey::new_unique();
+    insert_mint(
+        &mut svm,
+        vote_mint,
+        payer.pubkey(),
+        TOKEN_PROGRAM_ID,
+        Some(config),
+    );
+    send_ix(
+        &mut svm,
+        &payer,
+        initialize_ix(payer.pubkey(), config, vote_mint, TOKEN_PROGRAM_ID),
+    )
+    .unwrap();
+    svm.expire_blockhash();
+    let res = send_ix(
+        &mut svm,
+        &payer,
+        initialize_ix(payer.pubkey(), config, vote_mint, TOKEN_PROGRAM_ID),
+    );
+    assert!(res.is_err(), "second initialize should fail: {res:?}");
 }

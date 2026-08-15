@@ -24,4 +24,12 @@ pub enum ErrorCode {
     TallyOverflow,
     #[msg("Poll count overflow")]
     PollCountOverflow,
+    #[msg("Vote mint freeze authority must be the Config PDA")]
+    MintFreezeRequired,
+    #[msg("token_program must own the vote mint")]
+    MintTokenProgramMismatch,
+    #[msg("Cannot thaw while this poll is still open")]
+    PollStillOpen,
+    #[msg("Voter ATA is not frozen")]
+    AccountNotFrozen,
 }

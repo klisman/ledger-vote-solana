@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{TokenAccount, TokenInterface};
+use anchor_spl::token_interface::{
+    freeze_account, FreezeAccount, Mint, TokenAccount, TokenInterface,
+};
 
 use crate::{
     constants::*,
@@ -24,7 +26,14 @@ pub struct CastVote<'info> {
     )]
     pub poll: Account<'info, Poll>,
     #[account(
-        associated_token::mint = config.vote_mint,
+        address = config.vote_mint,
+        constraint = *vote_mint.to_account_info().owner == token_program.key()
+            @ ErrorCode::MintTokenProgramMismatch
+    )]
+    pub vote_mint: InterfaceAccount<'info, Mint>,
+    #[account(
+        mut,
+        associated_token::mint = vote_mint,
         associated_token::authority = voter,
         associated_token::token_program = token_program
     )]
@@ -42,6 +51,11 @@ pub struct CastVote<'info> {
 }
 
 pub fn handle_cast_vote(ctx: Context<CastVote>, choice: u8) -> Result<()> {
+    require!(
+        ctx.accounts.vote_mint.freeze_authority == Some(ctx.accounts.config.key()).into(),
+        ErrorCode::MintFreezeRequired
+    );
+
     let poll = &mut ctx.accounts.poll;
     require!(!poll.closed, ErrorCode::PollClosed);
 
@@ -53,6 +67,19 @@ pub fn handle_cast_vote(ctx: Context<CastVote>, choice: u8) -> Result<()> {
     require!(choice < poll.option_count, ErrorCode::InvalidChoice);
 
     let weight = vote_weight(ctx.accounts.voter_ata.amount)?;
+
+    if !ctx.accounts.voter_ata.is_frozen() {
+        let seeds: &[&[u8]] = &[CONFIG_SEED, &[ctx.accounts.config.bump]];
+        freeze_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.key(),
+            FreezeAccount {
+                account: ctx.accounts.voter_ata.to_account_info(),
+                mint: ctx.accounts.vote_mint.to_account_info(),
+                authority: ctx.accounts.config.to_account_info(),
+            },
+            &[seeds],
+        ))?;
+    }
 
     let idx = choice as usize;
     poll.tallies[idx] = poll.tallies[idx]

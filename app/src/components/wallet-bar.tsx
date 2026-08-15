@@ -9,6 +9,11 @@ import {
 } from "@solana/kit-plugin-wallet/react";
 import type { AppClient } from "@/components/providers";
 import { CLUSTER, shortAddress } from "@/lib/cluster";
+import { useMounted } from "@/lib/use-mounted";
+
+const WALLET_PENDING = (
+  <p className="text-sm text-[var(--ink-soft)]">Looking for wallets…</p>
+);
 
 function WalletButtons({ client }: { client: AppClient }) {
   const wallets = useWallets(client);
@@ -61,17 +66,20 @@ function WalletButtons({ client }: { client: AppClient }) {
 }
 
 export function WalletBar({ client }: { client: AppClient }) {
+  const mounted = useMounted();
+
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="kicker">
         {CLUSTER} clerk desk
       </p>
-      <WalletReadyGate
-        client={client}
-        fallback={<p className="text-sm text-[var(--ink-soft)]">Looking for wallets…</p>}
-      >
-        <WalletButtons client={client} />
-      </WalletReadyGate>
+      {mounted ? (
+        <WalletReadyGate client={client} fallback={WALLET_PENDING}>
+          <WalletButtons client={client} />
+        </WalletReadyGate>
+      ) : (
+        WALLET_PENDING
+      )}
     </div>
   );
 }

@@ -47,6 +47,10 @@ export function readI64le(data: Uint8Array, offset: number): bigint {
   );
 }
 
+export function utf8Len(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
 export function encodeAnchorString(value: string): Uint8Array {
   const utf8 = new TextEncoder().encode(value);
   return concatBytes(u32le(utf8.length), utf8);
