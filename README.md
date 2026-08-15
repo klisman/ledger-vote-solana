@@ -4,7 +4,7 @@ On-chain vote ledger for Solana. Built with [Anchor](https://www.anchor-lang.com
 
 Votes are **square-root token-weighted**: weight is `floor(sqrt(ATA amount))` of the mint on `Config`, snapshotted onto `VoteReceipt` when they vote. More tokens still mean more power, but extra balance buys diminishing tally units so a whale cannot linearly dominate a poll.
 
-[![CI](https://github.com/klisman/ledger-vote-solana/actions/workflows/ci.yml/badge.svg)](https://github.com/klisman/ledger-vote-solana/actions/workflows/ci.yml)
+[![CI](https://github.com/klisman/ledger-vote-solana/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/klisman/ledger-vote-solana/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Anchor](https://img.shields.io/badge/Anchor-1.1.2-8752F3)](https://www.anchor-lang.com/)
 [![Solana](https://img.shields.io/badge/Solana-3.1.10-9945FF)](https://solana.com/)
@@ -21,7 +21,7 @@ A portfolio Solana program that records polls, votes, and tallies on-chain, plus
 - Token and Token-2022 ATAs both work (`InterfaceAccount` + `TokenInterface`)
 - The web app talks to the program through Kit (no wallet-adapter)
 
-The on-chain program is complete (PRs #2–#6). The UI is the last planned slice ([#7](https://github.com/klisman/ledger-vote-solana/pull/7)).
+The on-chain program and poll-book UI are on `main` (PRs #2–#7). Freeze-on-vote, `thaw_vote`, localnet defaults, and GitHub Actions are the remaining slice.
 
 ## Stack
 
@@ -217,9 +217,10 @@ Sequential PRs. Each is its own branch; merge before starting the next.
 | 3 | `create_poll` | `feat/03-create-poll` | Merged ([#4](https://github.com/klisman/ledger-vote-solana/pull/4)) |
 | 4 | `cast_vote` — square-root token weight, one `VoteReceipt` per voter | `feat/04-cast-vote` | Merged ([#5](https://github.com/klisman/ledger-vote-solana/pull/5)) |
 | 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | Merged ([#6](https://github.com/klisman/ledger-vote-solana/pull/6)) |
-| 6 | Web UI — Next.js + Kit wallet, in-page mint to the connected wallet | `feat/06-web-ui` | Open ([#7](https://github.com/klisman/ledger-vote-solana/pull/7)) |
+| 6 | Web UI — Next.js + Kit wallet, in-page mint to the connected wallet | `feat/06-web-ui` | Merged ([#7](https://github.com/klisman/ledger-vote-solana/pull/7)) |
+| 7 | Freeze-on-vote, `thaw_vote`, localnet defaults, GitHub Actions | `feat/07-freeze-and-ci` | Open |
 
-After #7 merges, the planned product is done. Folded into that PR: freeze-on-vote, localnet-first defaults, Kit log unwrapping, GitHub Actions (`NO_DNA=1 anchor build` + `cargo test` + `app` unit tests). Optional later: screenshot, Codama client. Not planned: Surfpool, mainnet, changing votes, withdrawing receipt rent, escrow vaults.
+After this PR merges, the planned product is done. Optional later: screenshot, Codama client. Not planned: Surfpool, mainnet, changing votes, withdrawing receipt rent, escrow vaults.
 
 `cast_vote` weight is `floor(sqrt(raw ATA amount))`, snapshotted on the receipt. Linear `weight = amount` is out: extra tokens still add power, with diminishing returns so a whale cannot linearly dominate.
 
