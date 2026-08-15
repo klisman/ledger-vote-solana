@@ -36,4 +36,8 @@ pub mod ledger_vote {
     pub fn cast_vote(ctx: Context<CastVote>, choice: u8) -> Result<()> {
         crate::instructions::cast_vote::handle_cast_vote(ctx, choice)
     }
+
+    pub fn close_poll(ctx: Context<ClosePoll>) -> Result<()> {
+        crate::instructions::close_poll::handle_close_poll(ctx)
+    }
 }
