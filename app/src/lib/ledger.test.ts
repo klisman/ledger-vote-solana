@@ -3,13 +3,43 @@ import { describe, expect, it } from "vitest";
 import idl from "@/idl/ledger_vote.json";
 import { concatBytes, encodeAnchorString, u64le } from "@/lib/bytes";
 import { decodeConfig, decodePoll } from "@/lib/decode";
-import { getCreatePollInstruction } from "@/lib/instructions";
+import { formatTxError } from "@/lib/errors";
+import { getCreatePollInstruction, getThawVoteInstruction } from "@/lib/instructions";
+import { uiAmountToRaw, unwrapOption } from "@/lib/token-amount";
 import { voteWeight } from "@/lib/weight";
 
 const encoder = new TextEncoder();
 const addr = getAddressEncoder();
 const system = address("11111111111111111111111111111111");
 const token = address("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+
+describe("uiAmountToRaw", () => {
+  it("scales whole tokens by decimals", () => {
+    expect(uiAmountToRaw("100", 6)).toBe(100_000_000n);
+    expect(uiAmountToRaw("1", 0)).toBe(1n);
+  });
+
+  it("rejects fractional and empty amounts", () => {
+    expect(() => uiAmountToRaw("100.5", 6)).toThrow(/whole number/);
+    expect(() => uiAmountToRaw("", 6)).toThrow(/whole number/);
+    expect(() => uiAmountToRaw("abc", 6)).toThrow(/whole number/);
+  });
+});
+
+describe("utf8Len", () => {
+  it("counts UTF-8 bytes not JS characters", async () => {
+    const { utf8Len } = await import("@/lib/bytes");
+    expect(utf8Len("q")).toBe(1);
+    expect(utf8Len("é")).toBe(2);
+  });
+});
+
+describe("unwrapOption", () => {
+  it("reads Kit Some / None", () => {
+    expect(unwrapOption({ __option: "Some", value: "mint" })).toBe("mint");
+    expect(unwrapOption({ __option: "None" })).toBeNull();
+  });
+});
 
 describe("voteWeight", () => {
   it("matches floor(sqrt) for the README table", () => {
@@ -74,6 +104,23 @@ describe("account decode", () => {
   });
 });
 
+describe("formatTxError", () => {
+  it("unwraps nested Kit simulation logs into program errors", () => {
+    expect(
+      formatTxError({
+        message: "Transaction failed when it was simulated",
+        cause: { logs: ["Program log: custom program error: 0x177b"] },
+      }),
+    ).toBe("Vote mint freeze authority must be the Config PDA");
+  });
+
+  it("does not treat signature replay as already voted", () => {
+    expect(formatTxError("This transaction has already been processed")).toBe(
+      "That transaction was already processed — try again if nothing changed",
+    );
+  });
+});
+
 describe("create_poll encoding", () => {
   it("starts with the IDL discriminator", () => {
     const ix = getCreatePollInstruction({
@@ -90,5 +137,23 @@ describe("create_poll encoding", () => {
     );
     expect([...ix.data!.subarray(0, 8)]).toEqual([...expected]);
     expect(encodeAnchorString("q")[0]).toBe(1);
+  });
+});
+
+describe("thaw_vote encoding", () => {
+  it("starts with the IDL discriminator", () => {
+    const ix = getThawVoteInstruction({
+      voter: system,
+      config: system,
+      poll: system,
+      voteMint: token,
+      voterAta: system,
+      voteReceipt: system,
+      tokenProgram: token,
+    });
+    const expected = Uint8Array.from(
+      idl.instructions.find((item) => item.name === "thaw_vote")!.discriminator,
+    );
+    expect([...ix.data!.subarray(0, 8)]).toEqual([...expected]);
   });
 });

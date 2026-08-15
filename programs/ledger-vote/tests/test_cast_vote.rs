@@ -18,8 +18,9 @@ use poll::{
     set_clock, TEST_NOW,
 };
 use vote::{
-    classic_token_program, initialized_with_token_program, insert_ata, insert_token_account,
-    open_poll, send_vote, set_ata_amount, set_poll_closed, vote_pda, TOKEN_2022_PROGRAM_ID,
+    ata_is_frozen, classic_token_program, initialized_with_token_program, insert_ata,
+    insert_token_account, open_poll, send_vote, set_ata_amount, set_poll_closed, vote_pda,
+    TOKEN_2022_PROGRAM_ID,
 };
 
 fn fund_voter(svm: &mut litesvm::LiteSVM, voter: &Keypair) {
@@ -51,12 +52,14 @@ fn cast_vote_snapshots_sqrt_weight() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
         1,
     );
     assert!(res.is_ok(), "cast_vote failed: {res:?}");
+    assert!(ata_is_frozen(&svm, ata), "vote must freeze the voter ATA");
 
     let mut data: &[u8] = &svm.get_account(&receipt).unwrap().data;
     let receipt_state = ledger_vote::state::VoteReceipt::try_deserialize(&mut data).unwrap();
@@ -94,6 +97,7 @@ fn cast_vote_token_2022() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         TOKEN_2022_PROGRAM_ID,
@@ -124,8 +128,8 @@ fn cast_vote_two_voters_accumulate_tallies() {
     let (receipt_a, _) = vote_pda(&program_id, &poll, &a.pubkey());
     let (receipt_b, _) = vote_pda(&program_id, &poll, &b.pubkey());
 
-    send_vote(&mut svm, &a, config, poll, ata_a, receipt_a, token, 0).unwrap();
-    send_vote(&mut svm, &b, config, poll, ata_b, receipt_b, token, 0).unwrap();
+    send_vote(&mut svm, &a, config, poll, mint, ata_a, receipt_a, token, 0).unwrap();
+    send_vote(&mut svm, &b, config, poll, mint, ata_b, receipt_b, token, 0).unwrap();
 
     let mut data: &[u8] = &svm.get_account(&poll).unwrap().data;
     let poll_state = ledger_vote::state::Poll::try_deserialize(&mut data).unwrap();
@@ -156,6 +160,7 @@ fn cast_vote_whale_weight_is_sqrt_not_linear() {
         &whale,
         config,
         poll,
+        mint,
         ata_whale,
         receipt_whale,
         token,
@@ -167,6 +172,7 @@ fn cast_vote_whale_weight_is_sqrt_not_linear() {
         &shrimp,
         config,
         poll,
+        mint,
         ata_shrimp,
         receipt_shrimp,
         token,
@@ -208,6 +214,7 @@ fn cast_vote_rejects_zero_weight() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -233,6 +240,7 @@ fn cast_vote_rejects_invalid_choice() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -272,6 +280,7 @@ fn cast_vote_rejects_before_start() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -298,6 +307,7 @@ fn cast_vote_rejects_after_end() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -324,6 +334,7 @@ fn cast_vote_rejects_closed_poll() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -349,6 +360,7 @@ fn cast_vote_rejects_second_vote() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -361,6 +373,7 @@ fn cast_vote_rejects_second_vote() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -392,6 +405,7 @@ fn cast_vote_allows_exactly_end_ts() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
@@ -404,18 +418,18 @@ fn cast_vote_allows_exactly_end_ts() {
 fn cast_vote_rejects_wrong_mint_ata() {
     let (mut svm, program_id) = setup_svm();
     let authority = Keypair::new();
-    let (config, _mint) = initialized(&mut svm, &program_id, &authority);
+    let (config, mint) = initialized(&mut svm, &program_id, &authority);
     let poll = open_poll(&mut svm, &program_id, &authority, config);
     let token = classic_token_program();
 
     let voter = Keypair::new();
     fund_voter(&mut svm, &voter);
     let other_mint = Pubkey::new_unique();
-    insert_mint(&mut svm, other_mint, voter.pubkey(), token);
+    insert_mint(&mut svm, other_mint, voter.pubkey(), token, None);
     let wrong_ata = insert_ata(&mut svm, voter.pubkey(), other_mint, token, 100);
     let (receipt, _) = vote_pda(&program_id, &poll, &voter.pubkey());
 
-    let res = send_vote(&mut svm, &voter, config, poll, wrong_ata, receipt, token, 0);
+    let res = send_vote(&mut svm, &voter, config, poll, mint, wrong_ata, receipt, token, 0);
     assert!(res.is_err(), "wrong mint ATA should fail: {res:?}");
     assert!(
         svm.get_account(&receipt).is_none(),
@@ -437,7 +451,7 @@ fn cast_vote_rejects_non_ata_token_account() {
     insert_token_account(&mut svm, not_ata, voter.pubkey(), mint, token, 100);
     let (receipt, _) = vote_pda(&program_id, &poll, &voter.pubkey());
 
-    let res = send_vote(&mut svm, &voter, config, poll, not_ata, receipt, token, 0);
+    let res = send_vote(&mut svm, &voter, config, poll, mint, not_ata, receipt, token, 0);
     assert!(res.is_err(), "non-ATA token account should fail: {res:?}");
     assert!(
         svm.get_account(&receipt).is_none(),

@@ -28,13 +28,19 @@ pub fn setup_svm() -> (LiteSVM, Pubkey) {
     (svm, program_id)
 }
 
-pub fn insert_mint(svm: &mut LiteSVM, mint: Pubkey, mint_authority: Pubkey, token_program: Pubkey) {
+pub fn insert_mint(
+    svm: &mut LiteSVM,
+    mint: Pubkey,
+    mint_authority: Pubkey,
+    token_program: Pubkey,
+    freeze_authority: Option<Pubkey>,
+) {
     let mint_state = Mint {
         mint_authority: COption::Some(mint_authority),
         supply: 0,
         decimals: 6,
         is_initialized: true,
-        freeze_authority: COption::None,
+        freeze_authority: freeze_authority.map_or(COption::None, COption::Some),
     };
     let mut data = vec![0u8; Mint::LEN];
     Mint::pack(mint_state, &mut data).unwrap();

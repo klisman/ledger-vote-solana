@@ -71,6 +71,7 @@ export function getCastVoteInstruction(input: {
   voter: Address;
   config: Address;
   poll: Address;
+  voteMint: Address;
   voterAta: Address;
   voteReceipt: Address;
   tokenProgram: Address;
@@ -82,12 +83,37 @@ export function getCastVoteInstruction(input: {
       meta(input.voter, AccountRole.WRITABLE_SIGNER),
       meta(input.config, AccountRole.READONLY),
       meta(input.poll, AccountRole.WRITABLE),
-      meta(input.voterAta, AccountRole.READONLY),
+      meta(input.voteMint, AccountRole.READONLY),
+      meta(input.voterAta, AccountRole.WRITABLE),
       meta(input.voteReceipt, AccountRole.WRITABLE),
       meta(input.tokenProgram, AccountRole.READONLY),
       meta(SYSTEM_PROGRAM_ADDRESS, AccountRole.READONLY),
     ],
     data: concatBytes(disc("cast_vote"), u8(input.choice)),
+  };
+}
+
+export function getThawVoteInstruction(input: {
+  voter: Address;
+  config: Address;
+  poll: Address;
+  voteMint: Address;
+  voterAta: Address;
+  voteReceipt: Address;
+  tokenProgram: Address;
+}): Instruction {
+  return {
+    programAddress: PROGRAM_ID,
+    accounts: [
+      meta(input.voter, AccountRole.READONLY_SIGNER),
+      meta(input.config, AccountRole.READONLY),
+      meta(input.poll, AccountRole.READONLY),
+      meta(input.voteMint, AccountRole.READONLY),
+      meta(input.voterAta, AccountRole.WRITABLE),
+      meta(input.voteReceipt, AccountRole.READONLY),
+      meta(input.tokenProgram, AccountRole.READONLY),
+    ],
+    data: disc("thaw_vote"),
   };
 }
 
