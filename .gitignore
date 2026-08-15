@@ -22,10 +22,11 @@ id.json
 .env.*
 !.env.example
 
-# Node (reserved for a future client)
+# Node (app/ Next.js client)
 node_modules/
 dist/
 build/
+.next/
 .yarn/
 .pnp.*
 npm-debug.log*
