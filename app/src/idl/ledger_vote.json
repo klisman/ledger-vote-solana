@@ -1,0 +1,133 @@
+{
+  "address": "5VQzLw5d2hJeTUVBhWqDGoUSy8neABguNHTBgrJFUper",
+  "metadata": {
+    "name": "ledger_vote",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "On-chain vote ledger for Solana"
+  },
+  "instructions": [
+    {
+      "name": "initialize",
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        { "name": "payer", "writable": true, "signer": true },
+        { "name": "config", "writable": true },
+        { "name": "vote_mint" },
+        { "name": "token_program" },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_poll",
+      "discriminator": [182, 171, 112, 238, 6, 219, 14, 110],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "config", "writable": true },
+        { "name": "poll", "writable": true },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "question", "type": "string" },
+        { "name": "options", "type": { "vec": "string" } },
+        { "name": "start_ts", "type": "i64" },
+        { "name": "end_ts", "type": "i64" }
+      ]
+    },
+    {
+      "name": "cast_vote",
+      "discriminator": [20, 212, 15, 189, 69, 180, 69, 151],
+      "accounts": [
+        { "name": "voter", "writable": true, "signer": true },
+        { "name": "config" },
+        { "name": "poll", "writable": true },
+        { "name": "voter_ata" },
+        { "name": "vote_receipt", "writable": true },
+        { "name": "token_program" },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [{ "name": "choice", "type": "u8" }]
+    },
+    {
+      "name": "close_poll",
+      "discriminator": [139, 213, 162, 65, 172, 150, 123, 67],
+      "accounts": [
+        { "name": "authority", "signer": true },
+        { "name": "config" },
+        { "name": "poll", "writable": true }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    { "name": "Config", "discriminator": [155, 12, 170, 224, 30, 250, 204, 130] },
+    { "name": "Poll", "discriminator": [110, 234, 167, 188, 231, 136, 153, 111] },
+    { "name": "VoteReceipt", "discriminator": [104, 20, 204, 252, 45, 84, 37, 195] }
+  ],
+  "errors": [
+    { "code": 6000, "name": "Unauthorized", "msg": "Only the config authority can perform this action" },
+    { "code": 6001, "name": "InvalidOptionCount", "msg": "A poll must have between 2 and 4 options" },
+    { "code": 6002, "name": "InvalidOption", "msg": "Each option must be non-empty and at most 32 bytes" },
+    { "code": 6003, "name": "InvalidQuestion", "msg": "Question must be non-empty and at most 64 bytes" },
+    { "code": 6004, "name": "InvalidWindow", "msg": "Poll window is invalid: start must be before end, and end must be in the future" },
+    { "code": 6005, "name": "PollClosed", "msg": "This poll is closed" },
+    { "code": 6006, "name": "PollNotOpen", "msg": "This poll is not currently open for voting" },
+    { "code": 6007, "name": "InvalidChoice", "msg": "Choice index is out of range for this poll" },
+    { "code": 6008, "name": "ZeroVoteWeight", "msg": "Vote weight is zero; the voter ATA must hold the vote mint" },
+    { "code": 6009, "name": "TallyOverflow", "msg": "Tally overflow" },
+    { "code": 6010, "name": "PollCountOverflow", "msg": "Poll count overflow" }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "authority", "type": "pubkey" },
+          { "name": "vote_mint", "type": "pubkey" },
+          { "name": "poll_count", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "Poll",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "id", "type": "u64" },
+          { "name": "authority", "type": "pubkey" },
+          { "name": "bump", "type": "u8" },
+          { "name": "question", "type": { "array": ["u8", 64] } },
+          { "name": "options", "type": { "array": [{ "array": ["u8", 32] }, 4] } },
+          { "name": "option_count", "type": "u8" },
+          { "name": "start_ts", "type": "i64" },
+          { "name": "end_ts", "type": "i64" },
+          { "name": "closed", "type": "bool" },
+          { "name": "tallies", "type": { "array": ["u64", 4] } }
+        ]
+      }
+    },
+    {
+      "name": "VoteReceipt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "poll", "type": "pubkey" },
+          { "name": "voter", "type": "pubkey" },
+          { "name": "choice", "type": "u8" },
+          { "name": "weight", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    { "name": "CONFIG_SEED", "type": "bytes", "value": "[99, 111, 110, 102, 105, 103]" },
+    { "name": "POLL_SEED", "type": "bytes", "value": "[112, 111, 108, 108]" },
+    { "name": "VOTE_SEED", "type": "bytes", "value": "[118, 111, 116, 101]" },
+    { "name": "MAX_OPTIONS", "type": "u8", "value": "4" },
+    { "name": "MIN_OPTIONS", "type": "u8", "value": "2" }
+  ]
+}

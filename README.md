@@ -12,15 +12,16 @@ Votes are **square-root token-weighted**: weight is `floor(sqrt(ATA amount))` of
 
 A portfolio Solana program that records polls, votes, and tallies on-chain.
 
-**This PR** adds `close_poll`. The Config authority can lock a poll at any time; later `cast_vote` calls fail. Tallies already on the poll are left unchanged.
+**This PR** adds a Next.js poll-book UI. Connect a Wallet Standard wallet, read Config and polls from the cluster, then initialize, create, vote, or lock — matching the on-chain rules.
 
 - `initialize` creates `Config` and records the vote mint
 - `create_poll` opens a `Poll` PDA at `["poll", poll_id]` where `poll_id = config.poll_count`
 - `cast_vote` snapshots `weight = floor(sqrt(ATA amount))` onto a `VoteReceipt` at `["vote", poll, voter]`
 - `close_poll` sets `closed = true` (authority only; rejects a second close)
 - Token and Token-2022 ATAs both work (`InterfaceAccount` + `TokenInterface`)
+- The web app lives in `app/` and talks to the program through Kit (no wallet-adapter)
 
-The on-chain program is complete. A Kit wallet UI is next.
+The on-chain program is complete. This UI is the last planned slice.
 
 ## Stack
 
@@ -32,6 +33,7 @@ The on-chain program is complete. A Kit wallet UI is next.
 | LiteSVM | 0.10.x |
 | solana crates | ^3 |
 | Tokens | SPL Token + Token-2022 (`anchor-spl` interfaces) |
+| Web | Next.js App Router, `@solana/kit` + `@solana/kit-plugin-wallet` + `@solana/react` |
 
 ## Architecture
 
@@ -120,6 +122,11 @@ Splitting tokens across wallets can raise *total* sqrt weight (100 wallets of 1 
 │       ├── test_create_poll.rs
 │       ├── test_cast_vote.rs
 │       └── test_close_poll.rs
+└── app/                          # Next.js poll-book UI
+    ├── src/app/
+    ├── src/components/
+    ├── src/lib/
+    └── src/idl/ledger_vote.json  # committed copy; target/ stays gitignored
 ```
 
 ## Prerequisites
@@ -127,6 +134,7 @@ Splitting tokens across wallets can raise *total* sqrt weight (100 wallets of 1 
 - Rust 1.89.0 (`rust-toolchain.toml` pins this)
 - Solana CLI 3.1.10
 - Anchor CLI 1.1.2 (`avm install 1.1.2 && avm use 1.1.2`)
+- Node.js 20+ (for `app/`)
 
 ## Build and test
 
@@ -136,6 +144,41 @@ NO_DNA=1 cargo test
 ```
 
 `anchor test` is wired to `cargo test`. Tests run LiteSVM in-process; no local validator is required.
+
+## Web UI
+
+Minimal Next.js app in [`app/`](app/). Default cluster is **devnet**. There is no indexer: the poll list is `0 .. config.poll_count` with PDAs derived in the client. A committed IDL copy lives at `app/src/idl/ledger_vote.json`.
+
+```bash
+cd app
+cp .env.example .env.local   # optional; defaults are already devnet
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Connect a Wallet Standard wallet (Phantom / Solflare) set to the same cluster as `NEXT_PUBLIC_SOLANA_CLUSTER`.
+
+| Env | Default | Purpose |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SOLANA_CLUSTER` | `devnet` | `devnet` or `localnet` (sets the wallet chain) |
+| `NEXT_PUBLIC_SOLANA_RPC_URL` | `https://api.devnet.solana.com` | JSON-RPC |
+| `NEXT_PUBLIC_PROGRAM_ID` | `5VQzLw5d2hJeTUVBhWqDGoUSy8neABguNHTBgrJFUper` | Program id in source |
+
+The program must be **deployed at that id** on the cluster. LiteSVM tests do not put it on devnet. For localnet, load `target/deploy/ledger_vote.so` at the `declare_id!` address (do not `anchor keys sync`).
+
+**First-time Config.** Create a mint, then initialize from the UI (the connected wallet becomes authority):
+
+```bash
+spl-token create-token --decimals 6
+spl-token create-account <MINT>
+spl-token mint <MINT> 100
+```
+
+Paste the mint address into **Open the book**. Authority can then create and lock polls. Anyone with a positive canonical ATA of that mint can vote once per poll. The brass seal shows `floor(sqrt(raw ATA amount))` before you sign.
+
+```bash
+cd app && npm test    # codec / weight unit tests
+```
 
 ## Security notes
 
@@ -156,8 +199,8 @@ Sequential PRs. Each is its own branch; merge before starting the next.
 | 2 | Domain accounts + vote mint on `initialize` | `feat/02-accounts-and-mint` | Merged ([#3](https://github.com/klisman/ledger-vote-solana/pull/3)) |
 | 3 | `create_poll` | `feat/03-create-poll` | Merged ([#4](https://github.com/klisman/ledger-vote-solana/pull/4)) |
 | 4 | `cast_vote` — square-root token weight, one `VoteReceipt` per voter | `feat/04-cast-vote` | Merged ([#5](https://github.com/klisman/ledger-vote-solana/pull/5)) |
-| 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | **This PR** |
-| 6 | Minimal web UI — Next.js + Kit wallet | `feat/06-web-ui` | After `close_poll` |
+| 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | Merged ([#6](https://github.com/klisman/ledger-vote-solana/pull/6)) |
+| 6 | Minimal web UI — Next.js + Kit wallet | `feat/06-web-ui` | **This PR** |
 
 `cast_vote` weight is `floor(sqrt(raw ATA amount))`, snapshotted on the receipt. Linear `weight = amount` is out: extra tokens still add power, with diminishing returns so a whale cannot linearly dominate.
 
