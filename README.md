@@ -218,7 +218,7 @@ Sequential PRs. Each is its own branch; merge before starting the next.
 | 4 | `cast_vote` — square-root token weight, one `VoteReceipt` per voter | `feat/04-cast-vote` | Merged ([#5](https://github.com/klisman/ledger-vote-solana/pull/5)) |
 | 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | Merged ([#6](https://github.com/klisman/ledger-vote-solana/pull/6)) |
 | 6 | Web UI — Next.js + Kit wallet, in-page mint to the connected wallet | `feat/06-web-ui` | Merged ([#7](https://github.com/klisman/ledger-vote-solana/pull/7)) |
-| 7 | Freeze-on-vote, `thaw_vote`, localnet defaults, GitHub Actions | `feat/07-freeze-and-ci` | Open |
+| 7 | Freeze-on-vote, `thaw_vote`, localnet defaults, GitHub Actions | `feat/07-freeze-and-ci` | Open ([#9](https://github.com/klisman/ledger-vote-solana/pull/9)) |
 
 After this PR merges, the planned product is done. Optional later: screenshot, Codama client. Not planned: Surfpool, mainnet, changing votes, withdrawing receipt rent, escrow vaults.
 
