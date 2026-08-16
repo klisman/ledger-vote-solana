@@ -114,6 +114,16 @@ describe("formatTxError", () => {
     ).toBe("Vote mint freeze authority must be the Config PDA");
   });
 
+  it("maps Kit Custom program error: #code from the simulation wrapper", () => {
+    const err = new Error(
+      "Failed to send transaction: Transaction failed when it was simulated in order to estimate its resource limits. The resource limit estimates provided are for a transaction that failed when simulated and may not be representative of the resources this transaction would consume if successful.",
+    );
+    err.cause = new Error("Custom program error: #6011");
+    expect(formatTxError(err)).toBe(
+      "Vote mint freeze authority must be the Config PDA",
+    );
+  });
+
   it("does not treat signature replay as already voted", () => {
     expect(formatTxError("This transaction has already been processed")).toBe(
       "That transaction was already processed — try again if nothing changed",
@@ -155,5 +165,130 @@ describe("thaw_vote encoding", () => {
       idl.instructions.find((item) => item.name === "thaw_vote")!.discriminator,
     );
     expect([...ix.data!.subarray(0, 8)]).toEqual([...expected]);
+  });
+});
+
+describe("account catalog", () => {
+  it("uses 8 + InitSpace for program PDAs", async () => {
+    const {
+      CONFIG_SPACE,
+      POLL_SPACE,
+      RECEIPT_SPACE,
+      MINT_SPACE,
+      ATA_SPACE,
+      ACCOUNT_CATALOG,
+    } = await import("@/lib/account-catalog");
+    expect(CONFIG_SPACE).toBe(81);
+    expect(POLL_SPACE).toBe(291);
+    expect(RECEIPT_SPACE).toBe(82);
+    expect(MINT_SPACE).toBe(82);
+    expect(ATA_SPACE).toBe(165);
+    expect(ACCOUNT_CATALOG.config.creatingIx).toBe("initialize");
+    expect(ACCOUNT_CATALOG.receipt.creatingIx).toBe("cast_vote");
+    expect(ACCOUNT_CATALOG.config.seedsLabel).toBe('["config"]');
+    expect(ACCOUNT_CATALOG.config.discriminator).toEqual(
+      idl.accounts.find((item) => item.name === "Config")!.discriminator,
+    );
+  });
+});
+
+describe("create voter ATA", () => {
+  it("targets the associated token program", async () => {
+    const { generateKeyPairSigner } = await import("@solana/kit");
+    const { ASSOCIATED_TOKEN_PROGRAM_ADDRESS } = await import(
+      "@solana-program/token"
+    );
+    const { getCreateVoterAtaInstruction } = await import("@/lib/spl");
+    const payer = await generateKeyPairSigner();
+    const ix = await getCreateVoterAtaInstruction({
+      payer,
+      owner: payer.address,
+      mint: token,
+      tokenProgram: token,
+    });
+    expect(ix.programAddress).toBe(ASSOCIATED_TOKEN_PROGRAM_ADDRESS);
+  });
+});
+
+describe("eligible vote mints", () => {
+  it("keeps mints whose freeze authority is the Config PDA", async () => {
+    const { mintHasConfigFreeze, collectUniqueMints } = await import(
+      "@/lib/eligible-mints"
+    );
+    expect(mintHasConfigFreeze(system, system)).toBe(true);
+    expect(mintHasConfigFreeze(token, system)).toBe(false);
+    expect(mintHasConfigFreeze(null, system)).toBe(false);
+
+    const rows = collectUniqueMints([
+      { mint: token, tokenProgram: token, amount: 1n, decimals: 6 },
+      { mint: token, tokenProgram: token, amount: 9n, decimals: 6 },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.amount).toBe(9n);
+  });
+});
+
+describe("deskStep", () => {
+  const base = {
+    connected: true,
+    programLoaded: true,
+    lamports: 1_000_000_000n,
+    hasConfig: false,
+    isAuthority: false,
+    pollCount: 0,
+    tokenBalance: null as bigint | null,
+    canMint: false,
+    hasOpenUnvotedPoll: false,
+    canThaw: false,
+  };
+
+  it("asks to connect, then fund, then open the book", async () => {
+    const { deskStep } = await import("@/lib/desk-step");
+    expect(deskStep({ ...base, connected: false })).toBe("connect");
+    expect(deskStep({ ...base, lamports: 0n })).toBe("fund");
+    expect(deskStep(base)).toBe("open");
+  });
+
+  it("walks clerk then voter: first poll, tokens, vote, thaw, board", async () => {
+    const { deskStep } = await import("@/lib/desk-step");
+    expect(
+      deskStep({ ...base, hasConfig: true, isAuthority: true, pollCount: 0 }),
+    ).toBe("poll");
+    expect(
+      deskStep({
+        ...base,
+        hasConfig: true,
+        pollCount: 1,
+        hasOpenUnvotedPoll: true,
+        tokenBalance: 0n,
+        canMint: true,
+      }),
+    ).toBe("tokens");
+    expect(
+      deskStep({
+        ...base,
+        hasConfig: true,
+        pollCount: 1,
+        hasOpenUnvotedPoll: true,
+        tokenBalance: 100n,
+      }),
+    ).toBe("vote");
+    expect(
+      deskStep({
+        ...base,
+        hasConfig: true,
+        pollCount: 1,
+        tokenBalance: 100n,
+        canThaw: true,
+      }),
+    ).toBe("thaw");
+    expect(
+      deskStep({
+        ...base,
+        hasConfig: true,
+        pollCount: 1,
+        tokenBalance: 100n,
+      }),
+    ).toBe("board");
   });
 });
