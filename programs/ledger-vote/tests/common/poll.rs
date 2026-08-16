@@ -109,8 +109,14 @@ pub fn set_clock(svm: &mut LiteSVM, unix_timestamp: i64) {
 pub fn initialized(svm: &mut LiteSVM, program_id: &Pubkey, payer: &Keypair) -> (Pubkey, Pubkey) {
     svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
     let vote_mint = Pubkey::new_unique();
-    insert_mint(svm, vote_mint, payer.pubkey(), TOKEN_PROGRAM_ID);
     let (config, _) = config_pda(program_id);
+    insert_mint(
+        svm,
+        vote_mint,
+        payer.pubkey(),
+        TOKEN_PROGRAM_ID,
+        Some(config),
+    );
     send_ix(
         svm,
         payer,

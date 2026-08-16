@@ -125,8 +125,8 @@ pub fn initialized_with_token_program(
 ) -> (Pubkey, Pubkey) {
     svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
     let vote_mint = Pubkey::new_unique();
-    insert_mint(svm, vote_mint, payer.pubkey(), token_program);
     let (config, _) = config_pda(program_id);
+    insert_mint(svm, vote_mint, payer.pubkey(), token_program, Some(config));
     send_ix(
         svm,
         payer,
@@ -165,6 +165,7 @@ pub fn cast_vote_ix(
     voter: Pubkey,
     config: Pubkey,
     poll: Pubkey,
+    vote_mint: Pubkey,
     voter_ata: Pubkey,
     vote_receipt: Pubkey,
     token_program: Pubkey,
@@ -177,6 +178,7 @@ pub fn cast_vote_ix(
             voter,
             config,
             poll,
+            vote_mint,
             voter_ata,
             vote_receipt,
             token_program,
@@ -191,6 +193,7 @@ pub fn send_vote(
     voter: &Keypair,
     config: Pubkey,
     poll: Pubkey,
+    vote_mint: Pubkey,
     voter_ata: Pubkey,
     vote_receipt: Pubkey,
     token_program: Pubkey,
@@ -203,12 +206,79 @@ pub fn send_vote(
             voter.pubkey(),
             config,
             poll,
+            vote_mint,
             voter_ata,
             vote_receipt,
             token_program,
             choice,
         ),
     )
+}
+
+pub fn thaw_vote_ix(
+    voter: Pubkey,
+    config: Pubkey,
+    poll: Pubkey,
+    vote_mint: Pubkey,
+    voter_ata: Pubkey,
+    vote_receipt: Pubkey,
+    token_program: Pubkey,
+) -> Instruction {
+    Instruction::new_with_bytes(
+        ledger_vote::id(),
+        &ledger_vote::instruction::ThawVote {}.data(),
+        ledger_vote::accounts::ThawVote {
+            voter,
+            config,
+            poll,
+            vote_mint,
+            voter_ata,
+            vote_receipt,
+            token_program,
+        }
+        .to_account_metas(None),
+    )
+}
+
+pub fn send_thaw(
+    svm: &mut LiteSVM,
+    voter: &Keypair,
+    config: Pubkey,
+    poll: Pubkey,
+    vote_mint: Pubkey,
+    voter_ata: Pubkey,
+    vote_receipt: Pubkey,
+    token_program: Pubkey,
+) -> litesvm::types::TransactionResult {
+    send_ix(
+        svm,
+        voter,
+        thaw_vote_ix(
+            voter.pubkey(),
+            config,
+            poll,
+            vote_mint,
+            voter_ata,
+            vote_receipt,
+            token_program,
+        ),
+    )
+}
+
+pub fn transfer_ix(
+    token_program: Pubkey,
+    source: Pubkey,
+    destination: Pubkey,
+    owner: Pubkey,
+    amount: u64,
+) -> Instruction {
+    spl_token_interface::instruction::transfer(&token_program, &source, &destination, &owner, &[], amount)
+        .unwrap()
+}
+
+pub fn ata_is_frozen(svm: &LiteSVM, ata: Pubkey) -> bool {
+    let acc = svm.get_account(&ata).unwrap();
+    SplTokenAccount::unpack(&acc.data).unwrap().state == AccountState::Frozen
 }
 
 pub fn classic_token_program() -> Pubkey {

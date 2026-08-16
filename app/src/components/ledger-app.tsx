@@ -5,20 +5,28 @@ import {
   address,
   fetchEncodedAccount,
   fetchEncodedAccounts,
+  generateKeyPairSigner,
+  sequentialInstructionPlan,
   type Address,
 } from "@solana/kit";
 import { useConnectedWallet } from "@solana/kit-plugin-wallet/react";
 import { useClient, useSendTransaction } from "@solana/react";
 import {
   findAssociatedTokenPda,
+  fetchMaybeMint,
+  getCreateMintInstructionPlan,
+  getMintToATAInstructionPlanAsync,
+  getSetAuthorityInstruction,
+  AuthorityType,
   TOKEN_PROGRAM_ADDRESS,
 } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import type { AppClient } from "@/components/providers";
+import { MintDesk } from "@/components/mint-desk";
 import { WalletBar } from "@/components/wallet-bar";
 import { WeightSeal } from "@/components/weight-seal";
 import { CLUSTER, explorerTx, PROGRAM_ID, shortAddress } from "@/lib/cluster";
-import { readU64le } from "@/lib/bytes";
+import { readU64le, utf8Len } from "@/lib/bytes";
 import type { ConfigAccount, PollAccount, VoteReceiptAccount } from "@/lib/decode";
 import { decodeConfig, decodePoll, decodeVoteReceipt } from "@/lib/decode";
 import { formatTxError } from "@/lib/errors";
@@ -27,8 +35,16 @@ import {
   getClosePollInstruction,
   getCreatePollInstruction,
   getInitializeInstruction,
+  getThawVoteInstruction,
 } from "@/lib/instructions";
 import { configPda, pollPda, votePda } from "@/lib/pdas";
+import { useMounted } from "@/lib/use-mounted";
+import {
+  DEFAULT_MINT_DECIMALS,
+  DEFAULT_MINT_UI_AMOUNT,
+  uiAmountToRaw,
+  unwrapOption,
+} from "@/lib/token-amount";
 
 function toDatetimeLocal(unix: number): string {
   const d = new Date(unix * 1000);
@@ -73,7 +89,10 @@ export function LedgerApp() {
   const client = useClient<AppClient>();
   const connected = useConnectedWallet(client);
   const send = useSendTransaction(client);
-  const wallet = connected?.account.address as Address | undefined;
+  const mounted = useMounted();
+  const wallet = mounted
+    ? (connected?.account.address as Address | undefined)
+    : undefined;
 
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [busy, setBusy] = useState(false);
@@ -84,7 +103,12 @@ export function LedgerApp() {
   const [polls, setPolls] = useState<PollAccount[]>([]);
   const [receipts, setReceipts] = useState<Record<string, VoteReceiptAccount>>({});
   const [ataAmount, setAtaAmount] = useState<bigint | null>(null);
+  const [ataFrozen, setAtaFrozen] = useState(false);
+  const [programLoaded, setProgramLoaded] = useState(true);
   const [tokenProgram, setTokenProgram] = useState<Address | null>(null);
+  const [mintAuthority, setMintAuthority] = useState<Address | null>(null);
+  const [mintDecimals, setMintDecimals] = useState(DEFAULT_MINT_DECIMALS);
+  const [mintUiAmount, setMintUiAmount] = useState(DEFAULT_MINT_UI_AMOUNT);
   const [mintInput, setMintInput] = useState("");
   const [question, setQuestion] = useState("best color");
   const [optionFields, setOptionFields] = useState(["yes", "no", "", ""]);
@@ -94,24 +118,43 @@ export function LedgerApp() {
   );
 
   const isAuthority = Boolean(wallet && config && wallet === config.authority);
+  const walletSigner = connected?.signer ?? null;
+  const canMint = Boolean(
+    wallet && walletSigner && mintAuthority && wallet === mintAuthority,
+  );
 
   const reload = useCallback(async () => {
     setNow(Math.floor(Date.now() / 1000));
     const [pda] = await configPda(PROGRAM_ID);
     setConfigPdaAddress(pda);
+    const programAccount = await fetchEncodedAccount(client.rpc, PROGRAM_ID);
+    setProgramLoaded(programAccount.exists);
     const configAccount = await fetchEncodedAccount(client.rpc, pda);
     if (!configAccount.exists) {
       setConfig(null);
       setPolls([]);
       setReceipts({});
       setAtaAmount(null);
+      setAtaFrozen(false);
       setTokenProgram(null);
+      setMintAuthority(null);
       return;
     }
     const decoded = decodeConfig(configAccount.data);
     setConfig(decoded);
     const program = await mintTokenProgram(client.rpc, decoded.voteMint);
     setTokenProgram(program);
+    try {
+      const mintAccount = await fetchMaybeMint(client.rpc, decoded.voteMint);
+      if (mintAccount.exists) {
+        setMintDecimals(mintAccount.data.decimals);
+        setMintAuthority(unwrapOption(mintAccount.data.mintAuthority));
+      } else {
+        setMintAuthority(null);
+      }
+    } catch {
+      setMintAuthority(null);
+    }
 
     const count = Number(decoded.pollCount);
     const pollAddresses: Address[] = [];
@@ -133,6 +176,7 @@ export function LedgerApp() {
 
     if (!wallet) {
       setAtaAmount(null);
+      setAtaFrozen(false);
       setReceipts({});
       return;
     }
@@ -143,11 +187,9 @@ export function LedgerApp() {
       tokenProgram: program,
     });
     const tokenAccount = await fetchEncodedAccount(client.rpc, ata);
-    setAtaAmount(
-      tokenAccount.exists && tokenAccount.data.length >= 72
-        ? readU64le(tokenAccount.data, 64)
-        : null,
-    );
+    const hasAta = tokenAccount.exists && tokenAccount.data.length >= 72;
+    setAtaAmount(hasAta ? readU64le(tokenAccount.data, 64) : null);
+    setAtaFrozen(hasAta && tokenAccount.data.length > 108 && tokenAccount.data[108] === 2);
 
     const nextReceipts: Record<string, VoteReceiptAccount> = {};
     for (const poll of nextPolls) {
@@ -164,6 +206,41 @@ export function LedgerApp() {
     reload().catch((err: unknown) => setError(formatTxError(err)));
   }, [reload]);
 
+  useEffect(() => {
+    if (config) return;
+    const raw = mintInput.trim();
+    if (!raw) {
+      setMintAuthority(null);
+      setMintDecimals(DEFAULT_MINT_DECIMALS);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const mint = address(raw);
+        const mintAccount = await fetchMaybeMint(client.rpc, mint);
+        if (cancelled) return;
+        if (mintAccount.exists) {
+          setMintDecimals(mintAccount.data.decimals);
+          setMintAuthority(unwrapOption(mintAccount.data.mintAuthority));
+          const program = await mintTokenProgram(client.rpc, mint);
+          if (!cancelled) setTokenProgram(program);
+        } else {
+          setMintAuthority(null);
+          setTokenProgram(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setMintAuthority(null);
+          setTokenProgram(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client.rpc, config, mintInput]);
+
   async function run(label: string, build: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -178,6 +255,79 @@ export function LedgerApp() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onCreateMintAndFund() {
+    if (!wallet || !walletSigner || !configPdaAddress) return;
+    const amount = uiAmountToRaw(mintUiAmount, DEFAULT_MINT_DECIMALS);
+    await run("Mint created", async () => {
+      const newMint = await generateKeyPairSigner();
+      const createPlan = await getCreateMintInstructionPlan(
+        {
+          getMinimumBalance: async (space: number) =>
+            client.rpc.getMinimumBalanceForRentExemption(BigInt(space)).send(),
+        },
+        {
+          payer: walletSigner,
+          newMint,
+          decimals: DEFAULT_MINT_DECIMALS,
+          mintAuthority: wallet,
+          freezeAuthority: configPdaAddress,
+        },
+      );
+      const fundPlan = await getMintToATAInstructionPlanAsync({
+        payer: walletSigner,
+        mint: newMint.address,
+        owner: wallet,
+        mintAuthority: walletSigner,
+        amount,
+        decimals: DEFAULT_MINT_DECIMALS,
+      });
+      const result = await send.dispatchAsync(
+        sequentialInstructionPlan([createPlan, fundPlan]),
+      );
+      setMintInput(newMint.address);
+      return result;
+    });
+  }
+
+  async function onMintToWallet() {
+    if (!wallet || !walletSigner) return;
+    const mint = config?.voteMint ?? address(mintInput.trim());
+    const program = tokenProgram ?? (await mintTokenProgram(client.rpc, mint));
+    const amount = uiAmountToRaw(mintUiAmount, mintDecimals);
+    await run("Tokens minted", async () =>
+      send.dispatchAsync(
+        await getMintToATAInstructionPlanAsync(
+          {
+            payer: walletSigner,
+            mint,
+            owner: wallet,
+            mintAuthority: walletSigner,
+            amount,
+            decimals: mintDecimals,
+          },
+          { tokenProgram: program },
+        ),
+      ),
+    );
+  }
+
+  async function onRevokeMintAuthority() {
+    if (!walletSigner || !config || !tokenProgram) return;
+    await run("Mint authority revoked", async () =>
+      send.dispatchAsync([
+        getSetAuthorityInstruction(
+          {
+            owned: config.voteMint,
+            owner: walletSigner,
+            authorityType: AuthorityType.MintTokens,
+            newAuthority: null,
+          },
+          { programAddress: tokenProgram },
+        ),
+      ]),
+    );
   }
 
   async function onInitialize() {
@@ -199,6 +349,18 @@ export function LedgerApp() {
   async function onCreatePoll() {
     if (!wallet || !configPdaAddress || !config) return;
     const options = optionFields.map((s) => s.trim()).filter(Boolean);
+    if (utf8Len(question.trim()) === 0 || utf8Len(question.trim()) > 64) {
+      setError("Question must be 1–64 bytes (UTF-8)");
+      return;
+    }
+    if (options.length < 2 || options.length > 4) {
+      setError("A poll needs 2–4 options");
+      return;
+    }
+    if (options.some((item) => utf8Len(item) === 0 || utf8Len(item) > 32)) {
+      setError("Each option must be 1–32 bytes (UTF-8)");
+      return;
+    }
     await run("Poll entered", async () => {
       const [poll] = await pollPda(PROGRAM_ID, config.pollCount);
       return send.dispatchAsync([
@@ -242,10 +404,34 @@ export function LedgerApp() {
           voter: wallet,
           config: configPdaAddress,
           poll: poll.address,
+          voteMint: config.voteMint,
           voterAta: ata,
           voteReceipt: receipt,
           tokenProgram,
           choice,
+        }),
+      ]);
+    });
+  }
+
+  async function onThaw(poll: PollAccount) {
+    if (!wallet || !configPdaAddress || !config || !tokenProgram) return;
+    await run("ATA thawed", async () => {
+      const [ata] = await findAssociatedTokenPda({
+        owner: wallet,
+        mint: config.voteMint,
+        tokenProgram,
+      });
+      const [receipt] = await votePda(PROGRAM_ID, poll.address, wallet);
+      return send.dispatchAsync([
+        getThawVoteInstruction({
+          voter: wallet,
+          config: configPdaAddress,
+          poll: poll.address,
+          voteMint: config.voteMint,
+          voterAta: ata,
+          voteReceipt: receipt,
+          tokenProgram,
         }),
       ]);
     });
@@ -264,10 +450,18 @@ export function LedgerApp() {
         <h1 className="display">The poll book</h1>
         <p className="lede">
           Weight is <span className="formula">floor(√ amount)</span> of the
-          Config mint, snapshotted when you sign. Extra tokens still add power;
-          a whale cannot linearly dominate the page.
+          Config mint, snapshotted when you sign. The voter ATA is frozen so
+          the same pile cannot be transferred and voted again.
         </p>
       </header>
+
+      {!programLoaded ? (
+        <p className="error">
+          Program {shortAddress(PROGRAM_ID, 6)} is not on {CLUSTER}. For
+          localnet, load target/deploy/ledger_vote.so at the declare_id
+          address (do not anchor keys sync).
+        </p>
+      ) : null}
 
       {!wallet ? (
         <section className="sheet">
@@ -280,30 +474,44 @@ export function LedgerApp() {
       ) : null}
 
       {wallet && !config ? (
-        <section className="sheet">
-          <h2>Open the book</h2>
-          <p>
-            No Config PDA yet. The first signer becomes authority and names the
-            vote mint. Create a mint on this cluster first, then paste it here.
-          </p>
-          <label className="field">
-            Vote mint
-            <input
-              value={mintInput}
-              onChange={(e) => setMintInput(e.target.value)}
-              placeholder="Mint address"
-              spellCheck={false}
-            />
-          </label>
-          <button
-            type="button"
-            className="btn-ink"
-            disabled={busy || send.isRunning || !mintInput.trim()}
-            onClick={() => void onInitialize()}
-          >
-            Initialize config
-          </button>
-        </section>
+        <>
+          <MintDesk
+            amount={mintUiAmount}
+            onAmount={setMintUiAmount}
+            busy={busy || send.isRunning}
+            canCreate={Boolean(walletSigner)}
+            canMint={canMint}
+            mintAuthority={mintAuthority}
+            wallet={wallet}
+            onCreate={() => void onCreateMintAndFund()}
+            onMint={() => void onMintToWallet()}
+          />
+          <section className="sheet">
+            <h2>Open the book</h2>
+            <p>
+              No Config PDA yet. The first signer becomes authority for this
+              program id. The mint’s freeze authority must be the Config PDA
+              (the create-mint button sets that).
+            </p>
+            <label className="field">
+              Vote mint
+              <input
+                value={mintInput}
+                onChange={(e) => setMintInput(e.target.value)}
+                placeholder="Mint address"
+                spellCheck={false}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn-ink"
+              disabled={busy || send.isRunning || !mintInput.trim()}
+              onClick={() => void onInitialize()}
+            >
+              Initialize config
+            </button>
+          </section>
+        </>
       ) : null}
 
       {config && configPdaAddress ? (
@@ -334,9 +542,19 @@ export function LedgerApp() {
           </div>
           {ataAmount === null ? (
             <p className="hint">
-              No canonical ATA for this mint. You need an associated token
-              account with a positive balance before you can vote.
+              No canonical ATA for this mint. Fund it before initialize, or
+              transfer tokens from a wallet that already holds them.
             </p>
+          ) : null}
+          {canMint ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy || send.isRunning}
+              onClick={() => void onRevokeMintAuthority()}
+            >
+              Revoke mint authority
+            </button>
           ) : null}
         </section>
       ) : null}
@@ -402,6 +620,12 @@ export function LedgerApp() {
         const phase = phaseOf(poll, now);
         const total = poll.tallies.reduce((sum, n) => sum + n, 0n);
         const receipt = receipts[poll.address];
+        const anotherPollOpen = polls.some(
+          (item) =>
+            item.address !== poll.address &&
+            !item.closed &&
+            now <= Number(item.endTs),
+        );
         return (
           <article key={poll.address} className="sheet poll">
             <div className="poll-head">
@@ -442,7 +666,12 @@ export function LedgerApp() {
                       <button
                         type="button"
                         className="btn-brass"
-                        disabled={busy || send.isRunning || !ataAmount}
+                        disabled={
+                          busy ||
+                          send.isRunning ||
+                          ataAmount == null ||
+                          ataAmount === 0n
+                        }
                         onClick={() => void onVote(poll, i)}
                       >
                         Vote {option}
@@ -455,8 +684,28 @@ export function LedgerApp() {
             {receipt ? (
               <p className="hint">
                 Your receipt: option {receipt.choice + 1} · weight{" "}
-                {receipt.weight.toString()} (frozen)
+                {receipt.weight.toString()} (ATA frozen until this poll is
+                locked or ended)
               </p>
+            ) : null}
+            {receipt &&
+            ataFrozen &&
+            (poll.closed || now > Number(poll.endTs)) ? (
+              anotherPollOpen ? (
+                <p className="hint">
+                  Tokens stay frozen while another poll is still open, so the
+                  same pile cannot be moved and voted again.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy || send.isRunning}
+                  onClick={() => void onThaw(poll)}
+                >
+                  Thaw my vote tokens
+                </button>
+              )
             ) : null}
           </article>
         );

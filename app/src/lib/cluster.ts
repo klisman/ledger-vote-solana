@@ -4,7 +4,7 @@ import idl from "@/idl/ledger_vote.json";
 export type Cluster = "devnet" | "localnet";
 
 export const CLUSTER: Cluster =
-  process.env.NEXT_PUBLIC_SOLANA_CLUSTER === "localnet" ? "localnet" : "devnet";
+  process.env.NEXT_PUBLIC_SOLANA_CLUSTER === "devnet" ? "devnet" : "localnet";
 
 export const RPC_URL =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??

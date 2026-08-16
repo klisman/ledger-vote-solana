@@ -48,7 +48,7 @@ fn close_poll_preserves_tallies() {
     let amount: u64 = 100;
     let ata = insert_ata(&mut svm, voter.pubkey(), mint, token, amount);
     let (receipt, _) = vote_pda(&program_id, &poll, &voter.pubkey());
-    send_vote(&mut svm, &voter, config, poll, ata, receipt, token, 1).unwrap();
+    send_vote(&mut svm, &voter, config, poll, mint, ata, receipt, token, 1).unwrap();
 
     send_close(&mut svm, &authority, config, poll).unwrap();
 
@@ -111,6 +111,7 @@ fn close_poll_then_cast_vote_fails() {
         &voter,
         config,
         poll,
+        mint,
         ata,
         receipt,
         classic_token_program(),
