@@ -42,8 +42,7 @@ function WalletButtons({ client }: { client: AppClient }) {
   if (wallets.length === 0) {
     return (
       <p className="text-sm text-[var(--ink-soft)]">
-        No Wallet Standard wallet found. Install Phantom or Solflare, then
-        refresh.
+        No wallet found. Install Phantom or Solflare, then refresh.
       </p>
     );
   }
@@ -65,13 +64,22 @@ function WalletButtons({ client }: { client: AppClient }) {
   );
 }
 
-export function WalletBar({ client }: { client: AppClient }) {
+export function WalletBar({
+  client,
+  lamports,
+}: {
+  client: AppClient;
+  lamports?: bigint | null;
+}) {
   const mounted = useMounted();
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="kicker">
-        {CLUSTER} clerk desk
+        {CLUSTER === "localnet" ? "Local" : "Devnet"}
+        {lamports != null
+          ? ` · ${lamports === 0n ? "0 SOL" : `${Number(lamports) / 1_000_000_000} SOL`}`
+          : ""}
       </p>
       {mounted ? (
         <WalletReadyGate client={client} fallback={WALLET_PENDING}>

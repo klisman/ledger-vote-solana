@@ -6,14 +6,10 @@ export function WeightSeal({ amount }: { amount: bigint | null }) {
   return (
     <div className="seal" aria-label="Square-root vote weight">
       <span className="seal-ring" />
-      <span className="seal-kicker">floor √ amount</span>
+      <span className="seal-kicker">your weight</span>
       <span className="seal-value">{weight === null ? "—" : weight.toString()}</span>
       <span className="seal-foot">
-        {amount == null
-          ? "no ATA"
-          : amount === 0n
-            ? "zero balance"
-            : `${amount.toString()} raw`}
+        {amount == null || amount === 0n ? "no tokens yet" : "√ of your balance"}
       </span>
     </div>
   );

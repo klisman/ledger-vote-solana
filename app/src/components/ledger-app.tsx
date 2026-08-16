@@ -16,16 +16,13 @@ import {
   fetchMaybeMint,
   getCreateMintInstructionPlan,
   getMintToATAInstructionPlanAsync,
-  getSetAuthorityInstruction,
-  AuthorityType,
   TOKEN_PROGRAM_ADDRESS,
 } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import type { AppClient } from "@/components/providers";
-import { MintDesk } from "@/components/mint-desk";
+import { DeskFlow } from "@/components/desk-flow";
 import { WalletBar } from "@/components/wallet-bar";
-import { WeightSeal } from "@/components/weight-seal";
-import { CLUSTER, explorerTx, PROGRAM_ID, shortAddress } from "@/lib/cluster";
+import { CLUSTER, explorerTx, PROGRAM_ID, VALIDATOR_RPC_URL } from "@/lib/cluster";
 import { readU64le, utf8Len } from "@/lib/bytes";
 import type { ConfigAccount, PollAccount, VoteReceiptAccount } from "@/lib/decode";
 import { decodeConfig, decodePoll, decodeVoteReceipt } from "@/lib/decode";
@@ -38,6 +35,8 @@ import {
   getThawVoteInstruction,
 } from "@/lib/instructions";
 import { configPda, pollPda, votePda } from "@/lib/pdas";
+import { listEligibleVoteMints, type EligibleVoteMint } from "@/lib/eligible-mints";
+import { deskStep } from "@/lib/desk-step";
 import { useMounted } from "@/lib/use-mounted";
 import {
   DEFAULT_MINT_DECIMALS,
@@ -70,13 +69,23 @@ function signatureOf(result: unknown): string {
   return "";
 }
 
+function tryAddress(raw: string): Address | null {
+  try {
+    return address(raw);
+  } catch {
+    return null;
+  }
+}
+
 async function mintTokenProgram(
   rpc: AppClient["rpc"],
   mint: Address,
 ): Promise<Address> {
   const account = await fetchEncodedAccount(rpc, mint);
   if (!account.exists) {
-    throw new Error("Mint account not found on this cluster");
+    throw new Error(
+      `Mint account not found at ${VALIDATOR_RPC_URL} (${CLUSTER}). A public RPC reply (apiVersion 4.x, slot in the hundreds of millions) means the wallet is on mainnet, not this local validator.`,
+    );
   }
   const owner = account.programAddress;
   if (owner !== TOKEN_PROGRAM_ADDRESS && owner !== TOKEN_2022_PROGRAM_ADDRESS) {
@@ -110,6 +119,8 @@ export function LedgerApp() {
   const [mintDecimals, setMintDecimals] = useState(DEFAULT_MINT_DECIMALS);
   const [mintUiAmount, setMintUiAmount] = useState(DEFAULT_MINT_UI_AMOUNT);
   const [mintInput, setMintInput] = useState("");
+  const [walletLamports, setWalletLamports] = useState<bigint | null>(null);
+  const [eligibleMints, setEligibleMints] = useState<EligibleVoteMint[]>([]);
   const [question, setQuestion] = useState("best color");
   const [optionFields, setOptionFields] = useState(["yes", "no", "", ""]);
   const [startLocal, setStartLocal] = useState(() => toDatetimeLocal(Math.floor(Date.now() / 1000)));
@@ -129,6 +140,12 @@ export function LedgerApp() {
     setConfigPdaAddress(pda);
     const programAccount = await fetchEncodedAccount(client.rpc, PROGRAM_ID);
     setProgramLoaded(programAccount.exists);
+    if (wallet) {
+      const payer = await fetchEncodedAccount(client.rpc, wallet);
+      setWalletLamports(payer.exists ? BigInt(payer.lamports) : 0n);
+    } else {
+      setWalletLamports(null);
+    }
     const configAccount = await fetchEncodedAccount(client.rpc, pda);
     if (!configAccount.exists) {
       setConfig(null);
@@ -145,10 +162,10 @@ export function LedgerApp() {
     const program = await mintTokenProgram(client.rpc, decoded.voteMint);
     setTokenProgram(program);
     try {
-      const mintAccount = await fetchMaybeMint(client.rpc, decoded.voteMint);
-      if (mintAccount.exists) {
-        setMintDecimals(mintAccount.data.decimals);
-        setMintAuthority(unwrapOption(mintAccount.data.mintAuthority));
+      const mintDecoded = await fetchMaybeMint(client.rpc, decoded.voteMint);
+      if (mintDecoded.exists) {
+        setMintDecimals(mintDecoded.data.decimals);
+        setMintAuthority(unwrapOption(mintDecoded.data.mintAuthority));
       } else {
         setMintAuthority(null);
       }
@@ -162,14 +179,16 @@ export function LedgerApp() {
       const [poll] = await pollPda(PROGRAM_ID, BigInt(i));
       pollAddresses.push(poll);
     }
+
     const pollAccounts =
       pollAddresses.length === 0
         ? []
         : await fetchEncodedAccounts(client.rpc, pollAddresses);
     const nextPolls: PollAccount[] = [];
     pollAccounts.forEach((account, i) => {
+      const pollAddress = pollAddresses[i]!;
       if (account.exists) {
-        nextPolls.push(decodePoll(pollAddresses[i]!, account.data));
+        nextPolls.push(decodePoll(pollAddress, account.data));
       }
     });
     setPolls(nextPolls);
@@ -241,7 +260,31 @@ export function LedgerApp() {
     };
   }, [client.rpc, config, mintInput]);
 
+  useEffect(() => {
+    if (config || !wallet || !configPdaAddress) {
+      setEligibleMints([]);
+      return;
+    }
+    let cancelled = false;
+    void listEligibleVoteMints(client.rpc, wallet, configPdaAddress)
+      .then((rows) => {
+        if (!cancelled) setEligibleMints(rows);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(formatTxError(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client.rpc, config, wallet, configPdaAddress, mintInput]);
+
   async function run(label: string, build: () => Promise<unknown>) {
+    if (wallet && walletLamports === 0n) {
+      setError(
+        `Connected wallet has 0 SOL on ${CLUSTER}. Airdrop Phantom, not the CLI key: solana airdrop 100 ${wallet}`,
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -257,10 +300,15 @@ export function LedgerApp() {
     }
   }
 
-  async function onCreateMintAndFund() {
+  async function onOpenBook() {
     if (!wallet || !walletSigner || !configPdaAddress) return;
+    const existing = tryAddress(mintInput.trim());
+    if (existing) {
+      await onInitialize();
+      return;
+    }
     const amount = uiAmountToRaw(mintUiAmount, DEFAULT_MINT_DECIMALS);
-    await run("Mint created", async () => {
+    await run("Poll book opened", async () => {
       const newMint = await generateKeyPairSigner();
       const createPlan = await getCreateMintInstructionPlan(
         {
@@ -284,7 +332,16 @@ export function LedgerApp() {
         decimals: DEFAULT_MINT_DECIMALS,
       });
       const result = await send.dispatchAsync(
-        sequentialInstructionPlan([createPlan, fundPlan]),
+        sequentialInstructionPlan([
+          createPlan,
+          fundPlan,
+          getInitializeInstruction({
+            payer: wallet,
+            config: configPdaAddress,
+            voteMint: newMint.address,
+            tokenProgram: TOKEN_PROGRAM_ADDRESS,
+          }),
+        ]),
       );
       setMintInput(newMint.address);
       return result;
@@ -313,26 +370,9 @@ export function LedgerApp() {
     );
   }
 
-  async function onRevokeMintAuthority() {
-    if (!walletSigner || !config || !tokenProgram) return;
-    await run("Mint authority revoked", async () =>
-      send.dispatchAsync([
-        getSetAuthorityInstruction(
-          {
-            owned: config.voteMint,
-            owner: walletSigner,
-            authorityType: AuthorityType.MintTokens,
-            newAuthority: null,
-          },
-          { programAddress: tokenProgram },
-        ),
-      ]),
-    );
-  }
-
   async function onInitialize() {
     if (!wallet || !configPdaAddress) return;
-    await run("Config opened", async () => {
+    await run("Poll book opened", async () => {
       const mint = address(mintInput.trim());
       const program = await mintTokenProgram(client.rpc, mint);
       return send.dispatchAsync([
@@ -361,7 +401,7 @@ export function LedgerApp() {
       setError("Each option must be 1–32 bytes (UTF-8)");
       return;
     }
-    await run("Poll entered", async () => {
+    await run("Question published", async () => {
       const [poll] = await pollPda(PROGRAM_ID, config.pollCount);
       return send.dispatchAsync([
         getCreatePollInstruction({
@@ -379,7 +419,7 @@ export function LedgerApp() {
 
   async function onClose(poll: PollAccount) {
     if (!wallet || !configPdaAddress) return;
-    await run(`Poll ${poll.id} locked`, async () =>
+    await run("Voting closed", async () =>
       send.dispatchAsync([
         getClosePollInstruction({
           authority: wallet,
@@ -392,7 +432,7 @@ export function LedgerApp() {
 
   async function onVote(poll: PollAccount, choice: number) {
     if (!wallet || !configPdaAddress || !config || !tokenProgram) return;
-    await run("Vote frozen", async () => {
+    await run("Vote recorded", async () => {
       const [ata] = await findAssociatedTokenPda({
         owner: wallet,
         mint: config.voteMint,
@@ -416,7 +456,7 @@ export function LedgerApp() {
 
   async function onThaw(poll: PollAccount) {
     if (!wallet || !configPdaAddress || !config || !tokenProgram) return;
-    await run("ATA thawed", async () => {
+    await run("Tokens unfrozen", async () => {
       const [ata] = await findAssociatedTokenPda({
         owner: wallet,
         mint: config.voteMint,
@@ -443,278 +483,93 @@ export function LedgerApp() {
     return sig ? explorerTx(sig) : null;
   }, [notice]);
 
+  const disabled = busy || send.isRunning;
+  const hasOpenUnvotedPoll = polls.some(
+    (poll) => phaseOf(poll, now) === "open" && !receipts[poll.address],
+  );
+  const stillOpen = (poll: PollAccount) =>
+    polls.some(
+      (item) =>
+        item.address !== poll.address &&
+        !item.closed &&
+        now <= Number(item.endTs),
+    );
+  const canThaw = Boolean(
+    ataFrozen &&
+      polls.some(
+        (poll) =>
+          receipts[poll.address] &&
+          (poll.closed || now > Number(poll.endTs)) &&
+          !stillOpen(poll),
+      ),
+  );
+  const step = deskStep({
+    connected: Boolean(wallet),
+    programLoaded,
+    lamports: walletLamports,
+    hasConfig: Boolean(config),
+    isAuthority,
+    pollCount: polls.length,
+    tokenBalance: ataAmount,
+    canMint,
+    hasOpenUnvotedPoll,
+    canThaw,
+  });
+  const votePoll =
+    polls.find((poll) => phaseOf(poll, now) === "open" && !receipts[poll.address]) ??
+    null;
+  const thawPoll =
+    polls.find(
+      (poll) =>
+        receipts[poll.address] &&
+        ataFrozen &&
+        (poll.closed || now > Number(poll.endTs)) &&
+        !stillOpen(poll),
+    ) ?? null;
+  const focusPoll = step === "thaw" ? thawPoll : votePoll;
+
   return (
     <div className="book">
       <header className="book-head">
-        <WalletBar client={client} />
-        <h1 className="display">The poll book</h1>
-        <p className="lede">
-          Weight is <span className="formula">floor(√ amount)</span> of the
-          Config mint, snapshotted when you sign. The voter ATA is frozen so
-          the same pile cannot be transferred and voted again.
-        </p>
+        <WalletBar client={client} lamports={walletLamports} />
       </header>
-
-      {!programLoaded ? (
-        <p className="error">
-          Program {shortAddress(PROGRAM_ID, 6)} is not on {CLUSTER}. For
-          localnet, load target/deploy/ledger_vote.so at the declare_id
-          address (do not anchor keys sync).
-        </p>
-      ) : null}
-
-      {!wallet ? (
-        <section className="sheet">
-          <h2>Connect a wallet</h2>
-          <p>
-            This desk talks to {CLUSTER}. Approve each transaction in the
-            wallet after you review the accounts.
-          </p>
-        </section>
-      ) : null}
-
-      {wallet && !config ? (
-        <>
-          <MintDesk
-            amount={mintUiAmount}
-            onAmount={setMintUiAmount}
-            busy={busy || send.isRunning}
-            canCreate={Boolean(walletSigner)}
-            canMint={canMint}
-            mintAuthority={mintAuthority}
-            wallet={wallet}
-            onCreate={() => void onCreateMintAndFund()}
-            onMint={() => void onMintToWallet()}
-          />
-          <section className="sheet">
-            <h2>Open the book</h2>
-            <p>
-              No Config PDA yet. The first signer becomes authority for this
-              program id. The mint’s freeze authority must be the Config PDA
-              (the create-mint button sets that).
-            </p>
-            <label className="field">
-              Vote mint
-              <input
-                value={mintInput}
-                onChange={(e) => setMintInput(e.target.value)}
-                placeholder="Mint address"
-                spellCheck={false}
-              />
-            </label>
-            <button
-              type="button"
-              className="btn-ink"
-              disabled={busy || send.isRunning || !mintInput.trim()}
-              onClick={() => void onInitialize()}
-            >
-              Initialize config
-            </button>
-          </section>
-        </>
-      ) : null}
-
-      {config && configPdaAddress ? (
-        <section className="sheet">
-          <div className="sheet-row">
-            <div>
-              <h2>Config</h2>
-              <dl className="meta">
-                <div>
-                  <dt>Authority</dt>
-                  <dd className="font-mono">{shortAddress(config.authority, 6)}</dd>
-                </div>
-                <div>
-                  <dt>Vote mint</dt>
-                  <dd className="font-mono">{shortAddress(config.voteMint, 6)}</dd>
-                </div>
-                <div>
-                  <dt>Polls</dt>
-                  <dd className="font-mono">{config.pollCount.toString()}</dd>
-                </div>
-                <div>
-                  <dt>You</dt>
-                  <dd>{isAuthority ? "authority" : "voter"}</dd>
-                </div>
-              </dl>
-            </div>
-            <WeightSeal amount={ataAmount} />
-          </div>
-          {ataAmount === null ? (
-            <p className="hint">
-              No canonical ATA for this mint. Fund it before initialize, or
-              transfer tokens from a wallet that already holds them.
-            </p>
-          ) : null}
-          {canMint ? (
-            <button
-              type="button"
-              className="btn-ghost"
-              disabled={busy || send.isRunning}
-              onClick={() => void onRevokeMintAuthority()}
-            >
-              Revoke mint authority
-            </button>
-          ) : null}
-        </section>
-      ) : null}
-
-      {config && isAuthority ? (
-        <section className="sheet">
-          <h2>Enter a poll</h2>
-          <label className="field">
-            Question
-            <input
-              maxLength={64}
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-            />
-          </label>
-          <div className="option-grid">
-            {optionFields.map((value, i) => (
-              <label key={i} className="field">
-                Option {i + 1}
-                {i < 2 ? "" : " (optional)"}
-                <input
-                  maxLength={32}
-                  value={value}
-                  onChange={(e) =>
-                    setOptionFields((current) =>
-                      current.map((item, idx) => (idx === i ? e.target.value : item)),
-                    )
-                  }
-                />
-              </label>
-            ))}
-          </div>
-          <div className="option-grid">
-            <label className="field">
-              Opens
-              <input
-                type="datetime-local"
-                value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              Closes
-              <input
-                type="datetime-local"
-                value={endLocal}
-                onChange={(e) => setEndLocal(e.target.value)}
-              />
-            </label>
-          </div>
-          <button
-            type="button"
-            className="btn-ink"
-            disabled={busy || send.isRunning}
-            onClick={() => void onCreatePoll()}
-          >
-            Create poll
-          </button>
-        </section>
-      ) : null}
-
-      {polls.map((poll) => {
-        const phase = phaseOf(poll, now);
-        const total = poll.tallies.reduce((sum, n) => sum + n, 0n);
-        const receipt = receipts[poll.address];
-        const anotherPollOpen = polls.some(
-          (item) =>
-            item.address !== poll.address &&
-            !item.closed &&
-            now <= Number(item.endTs),
-        );
-        return (
-          <article key={poll.address} className="sheet poll">
-            <div className="poll-head">
-              <p className="kicker">
-                Poll {poll.id.toString()} · {phase}
-              </p>
-              {isAuthority && !poll.closed ? (
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  disabled={busy || send.isRunning}
-                  onClick={() => void onClose(poll)}
-                >
-                  Lock poll
-                </button>
-              ) : null}
-            </div>
-            <h2>{poll.question || "(untitled)"}</h2>
-            <p className="hint">
-              {new Date(Number(poll.startTs) * 1000).toLocaleString()} →{" "}
-              {new Date(Number(poll.endTs) * 1000).toLocaleString()}
-            </p>
-            <ul className="tally">
-              {poll.options.map((option, i) => {
-                const weight = poll.tallies[i] ?? 0n;
-                const pct =
-                  total === 0n ? 0 : Number((weight * 1000n) / total) / 10;
-                return (
-                  <li key={`${poll.address}-${i}`}>
-                    <div className="tally-top">
-                      <span>{option}</span>
-                      <span className="font-mono">{weight.toString()}</span>
-                    </div>
-                    <div className="tally-track">
-                      <span style={{ width: `${pct}%` }} />
-                    </div>
-                    {phase === "open" && !receipt ? (
-                      <button
-                        type="button"
-                        className="btn-brass"
-                        disabled={
-                          busy ||
-                          send.isRunning ||
-                          ataAmount == null ||
-                          ataAmount === 0n
-                        }
-                        onClick={() => void onVote(poll, i)}
-                      >
-                        Vote {option}
-                      </button>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-            {receipt ? (
-              <p className="hint">
-                Your receipt: option {receipt.choice + 1} · weight{" "}
-                {receipt.weight.toString()} (ATA frozen until this poll is
-                locked or ended)
-              </p>
-            ) : null}
-            {receipt &&
-            ataFrozen &&
-            (poll.closed || now > Number(poll.endTs)) ? (
-              anotherPollOpen ? (
-                <p className="hint">
-                  Tokens stay frozen while another poll is still open, so the
-                  same pile cannot be moved and voted again.
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  disabled={busy || send.isRunning}
-                  onClick={() => void onThaw(poll)}
-                >
-                  Thaw my vote tokens
-                </button>
-              )
-            ) : null}
-          </article>
-        );
-      })}
-
-      {config && polls.length === 0 ? (
-        <p className="hint">No polls on this Config yet.</p>
-      ) : null}
-
+      <DeskFlow
+        step={step}
+        disabled={disabled}
+        wallet={wallet}
+        mintUiAmount={mintUiAmount}
+        onAmount={setMintUiAmount}
+        mintInput={mintInput}
+        onMintInput={setMintInput}
+        eligibleMints={eligibleMints}
+        canMint={canMint}
+        question={question}
+        onQuestion={setQuestion}
+        optionFields={optionFields}
+        onOption={(index, value) =>
+          setOptionFields((current) =>
+            current.map((item, idx) => (idx === index ? value : item)),
+          )
+        }
+        startLocal={startLocal}
+        endLocal={endLocal}
+        onStart={setStartLocal}
+        onEnd={setEndLocal}
+        config={config}
+        isAuthority={isAuthority}
+        polls={polls}
+        receipts={receipts}
+        ataAmount={ataAmount}
+        ataFrozen={ataFrozen}
+        focusPoll={focusPoll}
+        phaseOf={(poll) => phaseOf(poll, now)}
+        onOpenBook={() => void onOpenBook()}
+        onCreatePoll={() => void onCreatePoll()}
+        onMintToWallet={() => void onMintToWallet()}
+        onVote={(poll, choice) => void onVote(poll, choice)}
+        onClose={(poll) => void onClose(poll)}
+        onThaw={(poll) => void onThaw(poll)}
+      />
       {notice ? (
         <p className="notice">
           {notice}

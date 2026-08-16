@@ -21,7 +21,7 @@ A portfolio Solana program that records polls, votes, and tallies on-chain, plus
 - Token and Token-2022 ATAs both work (`InterfaceAccount` + `TokenInterface`)
 - The web app talks to the program through Kit (no wallet-adapter)
 
-The on-chain program and poll-book UI are on `main` (PRs #2–#7). Freeze-on-vote, `thaw_vote`, localnet defaults, and GitHub Actions are the remaining slice.
+The on-chain program, poll-book UI, freeze-on-vote, and CI are on `main` (PRs #2–#9). This branch is a stepped poll-book UI: the page infers the next action from chain state.
 
 ## Stack
 
@@ -57,9 +57,11 @@ flowchart TD
 
 | Account | Seeds | Status |
 | --- | --- | --- |
-| `Config` | `["config"]` | Implemented. Authority, vote mint, sequential `poll_count`. |
-| `Poll` | `["poll", poll_id]` | Implemented. Question, 2–4 options, window, tallies, `closed`. |
-| `VoteReceipt` | `["vote", poll, voter]` | Implemented. Choice + `floor(sqrt(ATA amount))` snapshotted at vote. One per voter per poll. |
+| Vote mint | keypair (not a PDA) | SPL Token mint. Freeze authority must be the Config PDA. |
+| Voter ATA | `["owner", token_program, mint]` | Canonical associated token account. Created empty or by mint-to. Frozen on `cast_vote`. |
+| `Config` | `["config"]` | Authority, vote mint, sequential `poll_count`. |
+| `Poll` | `["poll", poll_id]` | Question, 2–4 options, window, tallies, `closed`. |
+| `VoteReceipt` | `["vote", poll, voter]` | Choice + `floor(sqrt(ATA amount))` snapshotted at vote. Created only by `cast_vote`. |
 
 ## Instructions
 
@@ -103,7 +105,7 @@ Weight is per **wallet snapshot**, not per token. Sequential reuse (transfer the
 
 **Overlapping polls.** Freeze is per ATA, not per poll. Voting in poll A freezes the account; a second open poll B can still be voted from that same frozen ATA. Thawing after A ends would unfreeze while B is still open. The UI hides thaw until no other poll is open. The instruction itself does not scan other polls (no remaining-accounts loop). Treat concurrent open polls as a clerk-desk limitation, not escrow.
 
-`Config` is a first-writer singleton on this program id: whoever lands `initialize` is authority for every poll. Keep mint authority only if you want a faucet; revoke it after distribution. The UI mint button exists only **before** initialize.
+`Config` is a first-writer singleton on this program id: whoever lands `initialize` is authority for every poll. Keep mint authority only if you want a faucet; revoke it after distribution (`spl-token authorize <MINT> mint --disable`). The web app’s first-time path is **Create token and open** (mint with freeze = Config PDA, then `initialize`).
 
 `close_poll` **locks** the poll (`closed = true`). It does not reclaim rent.
 
@@ -133,9 +135,9 @@ Weight is per **wallet snapshot**, not per token. Sequential reuse (transfer the
 │       └── test_thaw_vote.rs
 ├── .github/workflows/ci.yml
 └── app/                          # Next.js poll-book UI
-    ├── src/app/
-    ├── src/components/
-    ├── src/lib/
+    ├── src/app/                    # includes localnet JSON-RPC proxy
+    ├── src/components/             # stepped desk, wallet
+    ├── src/lib/                    # deskStep, catalog, codecs
     └── src/idl/ledger_vote.json  # committed copy; target/ stays gitignored
 ```
 
@@ -159,6 +161,10 @@ NO_DNA=1 cargo test
 
 Minimal Next.js app in [`app/`](app/). Default cluster is **localnet**. There is no indexer: the poll list is `0 .. config.poll_count` with PDAs derived in the client. A committed IDL copy lives at `app/src/idl/ledger_vote.json`. Instruction codecs are hand-rolled from that IDL (no Codama client).
 
+The page shows **one step at a time**, chosen from on-chain state (`deskStep`): connect → fund the connected wallet → open the book → first question → tokens → vote → thaw → the book.
+
+On localnet, browser JSON-RPC goes to `/solana-rpc` (this Next app) and is proxied to `127.0.0.1:8899`, so a wallet extension cannot redirect `getAccountInfo` to mainnet. **Signing still uses the wallet’s selected network** — Phantom must be on Localhost.
+
 ```bash
 cd app
 cp .env.example .env.local   # optional; defaults are already localnet
@@ -166,12 +172,12 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Connect a Wallet Standard wallet (Phantom / Solflare) set to the same cluster as `NEXT_PUBLIC_SOLANA_CLUSTER`.
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000) (not a LAN IP). Connect a Wallet Standard wallet set to the same cluster as `NEXT_PUBLIC_SOLANA_CLUSTER`.
 
 | Env | Default | Purpose |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SOLANA_CLUSTER` | `localnet` | `localnet` or `devnet` (sets the wallet chain) |
-| `NEXT_PUBLIC_SOLANA_RPC_URL` | `http://127.0.0.1:8899` | JSON-RPC |
+| `NEXT_PUBLIC_SOLANA_RPC_URL` | `http://127.0.0.1:8899` | Validator JSON-RPC (proxied on localnet) |
 | `NEXT_PUBLIC_PROGRAM_ID` | `5VQzLw5d2hJeTUVBhWqDGoUSy8neABguNHTBgrJFUper` | Program id in source |
 
 The program must be **deployed at that id** on the cluster. LiteSVM tests do not put it on a validator. For localnet:
@@ -182,16 +188,18 @@ solana-test-validator --reset --bpf-program 5VQzLw5d2hJeTUVBhWqDGoUSy8neABguNHTB
 
 Do not `anchor keys sync`.
 
-**First-time Config.** On the page, **Create mint & fund this wallet** (6 decimals, freeze authority = Config PDA, mint authority = connected wallet). That fills **Vote mint**; then initialize. Revoke mint authority after you have funded voters. The CLI still works if you set freeze to the Config PDA:
+`solana airdrop` funds `~/.config/solana/id.json`. Phantom is a different key — airdrop the address shown on the desk.
+
+**First-time Config.** On the page, **Create token and open** (6 decimals, freeze authority = Config PDA, mint authority = connected wallet, then `initialize`). The CLI still works if you enable freeze and set it to the Config PDA:
 
 ```bash
-spl-token create-token --decimals 6
+spl-token create-token --decimals 6 --enable-freeze
 spl-token authorize <MINT> freeze <CONFIG_PDA>
 spl-token create-account <MINT>
 spl-token mint <MINT> 100
 ```
 
-**Mint to this wallet** only works when the connected wallet is the mint authority. A mint created with the CLI is owned by `id.json`, so Phantom cannot mint it from the page. Authority can then create and lock polls. Anyone with a positive canonical ATA of that mint can vote once per poll. The brass seal shows `floor(sqrt(raw ATA amount))` before you sign.
+**Add tokens** on the desk only works when the connected wallet is the mint authority. A mint created with the CLI is owned by `id.json`, so Phantom cannot mint it from the page. Authority can then create and lock polls. Anyone with a positive canonical ATA of that mint can vote once per poll. The brass seal shows `floor(sqrt(raw ATA amount))` before you sign.
 
 ```bash
 cd app && npm test    # codec / weight unit tests
@@ -218,9 +226,10 @@ Sequential PRs. Each is its own branch; merge before starting the next.
 | 4 | `cast_vote` — square-root token weight, one `VoteReceipt` per voter | `feat/04-cast-vote` | Merged ([#5](https://github.com/klisman/ledger-vote-solana/pull/5)) |
 | 5 | `close_poll` — authority locks the poll; later votes fail | `feat/05-close-poll` | Merged ([#6](https://github.com/klisman/ledger-vote-solana/pull/6)) |
 | 6 | Web UI — Next.js + Kit wallet, in-page mint to the connected wallet | `feat/06-web-ui` | Merged ([#7](https://github.com/klisman/ledger-vote-solana/pull/7)) |
-| 7 | Freeze-on-vote, `thaw_vote`, localnet defaults, GitHub Actions | `feat/07-freeze-and-ci` | Open ([#9](https://github.com/klisman/ledger-vote-solana/pull/9)) |
+| 7 | Freeze-on-vote, `thaw_vote`, localnet defaults, GitHub Actions | `feat/07-freeze-and-ci` | Merged ([#9](https://github.com/klisman/ledger-vote-solana/pull/9)) |
+| 8 | Stepped poll-book UI — next action from chain state, localnet RPC proxy | `feat/08-account-desk` | Open |
 
-After this PR merges, the planned product is done. Optional later: screenshot, Codama client. Not planned: Surfpool, mainnet, changing votes, withdrawing receipt rent, escrow vaults.
+This PR is UI only, not new protocol. Optional later: screenshot, Codama client. Not planned: Surfpool, mainnet, changing votes, withdrawing receipt rent, escrow vaults.
 
 `cast_vote` weight is `floor(sqrt(raw ATA amount))`, snapshotted on the receipt. Linear `weight = amount` is out: extra tokens still add power, with diminishing returns so a whale cannot linearly dominate.
 

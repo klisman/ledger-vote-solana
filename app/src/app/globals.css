@@ -37,7 +37,7 @@ body {
 }
 
 .book {
-  width: min(42rem, calc(100% - 2rem));
+  width: min(52rem, calc(100% - 2rem));
   margin: 2.5rem auto 4rem;
   display: flex;
   flex-direction: column;
@@ -48,8 +48,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--rule);
 }
 
 .display {
@@ -215,10 +213,70 @@ body {
   font-size: 0.9rem;
 }
 
+.step {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  padding: 1.5rem 1.45rem 1.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.step-title {
+  font-family: var(--font-display), ui-sans-serif, sans-serif;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  margin: 0;
+}
+
+.cmd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--paper);
+  border: 1px dashed var(--rule);
+}
+
+.cmd code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+  flex: 1;
+}
+
+.advanced {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.advanced summary {
+  cursor: pointer;
+  margin-bottom: 0.75rem;
+}
+
+.foot-note {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.poll-card {
+  width: 100%;
+}
+
 .notice,
 .error {
   font-size: 0.9rem;
-  word-break: break-all;
+}
+
+.error {
+  word-break: break-word;
 }
 
 .notice {
@@ -304,4 +362,17 @@ body {
   * {
     transition: none !important;
   }
+}
+
+.mint-pick {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.mint-pick button {
+  font-family: var(--font-mono), ui-monospace, monospace;
 }
